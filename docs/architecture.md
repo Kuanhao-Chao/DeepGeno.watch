@@ -26,8 +26,11 @@ local to the module.
 ## Invariants
 
 - A Candidate always has a complete, non-empty abstract and source provenance.
+- A Candidate must match both a configured domain topic and an explicit computational
+  or modeling signal; descriptive wet-lab keyword overlap alone is insufficient.
 - Canonical identity prefers normalized DOI, then source accession, then a stable
-  content fingerprint. Multiple source records merge into one Paper.
+  content fingerprint. Multiple source records merge into one Paper, and identical
+  source accessions appear only once in its provenance.
 - No synthesis model runs before an explicit candidate `summarize` decision.
 - No summary is public before an explicit draft approval represented by a merged PR.
 - Every quantitative claim names at least one evidence ID.
@@ -60,8 +63,9 @@ or provider adapters.
 Discovery uses official or community-supported metadata interfaces only:
 
 - bioRxiv date-window API, with three-day overlap and upsert
-- arXiv OAI-PMH through its canonical `oaipmh.arxiv.org` endpoint for `q-bio`, `cs`,
-  and `stat`, post-filtered to `q-bio.*`, `cs.LG`, and `stat.ML`
+- arXiv OAI-PMH through its canonical `oaipmh.arxiv.org` endpoint, using the `q-bio`,
+  `cs:cs:LG`, and `stat:stat:ML` server-side sets and retaining a category-boundary
+  check for `q-bio.*`, `cs.LG`, and `stat.ML`
 - Crossref journal/ISSN polling using stable created-date windows and cursor pagination
 - Europe PMC core journal search to recover complete abstracts that Crossref omits
 - Europe PMC DOI/PMID enrichment and open-access JATS when available

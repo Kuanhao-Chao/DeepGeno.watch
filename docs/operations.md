@@ -41,7 +41,10 @@
 ## Initial rollout
 
 1. Run discovery in shadow mode for three days. Inspect coverage, duplicates, complete
-   abstracts, ranking reasons, and source latency without opening PRs.
+   abstracts, ranking reasons, and source latency without opening PRs. Dispatch each
+   dated shadow window only after the previous run completes: GitHub keeps at most one
+   running and one pending run for this concurrency group, so a newly queued run can
+   replace an older pending run.
 2. Run one manually selected paper through OpenAI and one through Anthropic. Do not use
    silent failover; compare the structured drafts and record the chosen production
    provider/model explicitly.
@@ -53,7 +56,8 @@
 
 ## Daily checks
 
-- Candidate count is normally 10–30; zero or a large discontinuity deserves inspection.
+- Compare candidate count with the rolling baseline (the first tuned one-day window
+  produced 14); zero or a greater-than-twofold discontinuity deserves inspection.
 - Every candidate has its full abstract and a visible relevance explanation.
 - No paper receives multiple canonical IDs for the same normalized DOI.
 - Source checkpoints advance, with configured overlap retained.
@@ -72,6 +76,9 @@ stale-source alert.
 A candidate review PR closed without merge is reopened on the next identical discovery
 run. A model draft committed before PR creation is reused without another model call.
 All literature-state workflow runs share one non-canceling concurrency group.
+This serializes state mutation, but it is not a durable multi-run queue: dispatch
+manual replay and backfill batches sequentially and wait for each conclusion before
+submitting the next batch.
 
 ## Alerts
 

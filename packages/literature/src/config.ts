@@ -23,8 +23,20 @@ const arxivSchema = z.object({
   kind: z.literal("arxiv-oai"),
   enabled: z.boolean(),
   baseUrl: httpsUrl,
-  sets: z.array(z.enum(["q-bio", "cs", "stat"])).min(1),
-  categories: z.array(nonEmpty).min(1),
+  targets: z
+    .array(
+      z.object({
+        id: nonEmpty,
+        setSpec: nonEmpty,
+        categoryPrefixes: z.array(nonEmpty).min(1),
+      }),
+    )
+    .min(1)
+    .refine(
+      (targets) =>
+        new Set(targets.map((target) => target.id)).size === targets.length,
+      "arXiv target IDs must be unique",
+    ),
   overlapDays: z.number().int().nonnegative(),
   requestDelayMs: z.number().int().nonnegative(),
 });
@@ -69,8 +81,9 @@ const taxonomySchema = z.object({
 const relevanceSchema = z.object({
   version: z.union([z.string(), z.number()]),
   candidateThreshold: z.number().min(0).max(1),
+  requireComputationalSignal: z.boolean(),
   positiveSignals: z.object({
-    architecture: z.array(nonEmpty),
+    computational: z.array(nonEmpty),
     genomics: z.array(nonEmpty),
   }),
   negativeSignals: z.array(nonEmpty),
@@ -114,7 +127,8 @@ export async function loadPipelineConfig(
           definition.phrases,
         ]),
       ),
-      architectureSignals: relevance.positiveSignals.architecture,
+      computationalSignals: relevance.positiveSignals.computational,
+      requireComputationalSignal: relevance.requireComputationalSignal,
       genomicsSignals: relevance.positiveSignals.genomics,
       negativeSignals: relevance.negativeSignals,
     },

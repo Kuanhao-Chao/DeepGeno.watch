@@ -22,7 +22,8 @@ export interface NormalizedPaper {
 
 export interface RelevancePolicy {
   topicTerms?: Readonly<Record<string, readonly string[]>>;
-  architectureSignals?: readonly string[];
+  computationalSignals?: readonly string[];
+  requireComputationalSignal?: boolean;
   genomicsSignals?: readonly string[];
   negativeSignals?: readonly string[];
 }
@@ -86,13 +87,32 @@ const TOPICS = {
   ],
 } as const;
 
-const ARCHITECTURE_SIGNALS = [
+const COMPUTATIONAL_SIGNALS = [
   "deep learning",
+  "machine learning",
   "transformer",
   "neural network",
   "attention",
   "state space model",
   "foundation model",
+  "language model",
+  "self-supervised",
+  "representation learning",
+  "predictive model",
+  "computational model",
+  "sequence model",
+  "model architecture",
+  "model training",
+  "modelling",
+  "modeling",
+  "prediction framework",
+  "algorithm",
+  "classifier",
+  "embedding",
+  "encoder",
+  "decoder",
+  "ensemble",
+  "in silico",
 ] as const;
 
 const GENOMICS_SIGNALS = [
@@ -165,7 +185,15 @@ function normalizeGroup(
   enrichments: ReadonlyMap<string, Enrichment>,
   policy: RelevancePolicy,
 ): NormalizedPaper | undefined {
-  const ordered = [...sourceRecords].sort(compareRecordQuality);
+  const seenSourceRecords = new Set<string>();
+  const ordered = [...sourceRecords]
+    .sort(compareRecordQuality)
+    .filter((record) => {
+      const key = recordKey(record);
+      if (seenSourceRecords.has(key)) return false;
+      seenSourceRecords.add(key);
+      return true;
+    });
   const primary = ordered[0];
   if (!primary) return undefined;
   const abstract =
@@ -188,6 +216,7 @@ function normalizeGroup(
     ordered.flatMap((record) => record.categories ?? []),
     policy,
   );
+  if (!relevance.eligible) return undefined;
   return {
     id: `paper-${sha256(key).slice(0, 16)}`,
     title: primary.title,
@@ -274,12 +303,13 @@ function scoreAndTag(
   categories: readonly string[],
   policy: RelevancePolicy,
 ): {
+  eligible: boolean;
   score: number;
   tags: string[];
   matchedTerms: string[];
 } {
-  const normalizedTitle = title.toLowerCase();
-  const body = `${title}\n${abstract}\n${categories.join(" ")}`.toLowerCase();
+  const normalizedTitle = searchableText(title);
+  const body = searchableText(title, abstract, categories.join(" "));
   const tags: string[] = [];
   const matchedTerms: string[] = [];
   let score = 0;
@@ -287,33 +317,54 @@ function scoreAndTag(
   for (const [tag, terms] of Object.entries(topicTerms)) {
     let matched = false;
     for (const term of terms) {
-      if (!body.includes(term)) continue;
+      if (!includesTerm(body, term)) continue;
       matched = true;
       matchedTerms.push(term);
-      score += normalizedTitle.includes(term) ? 4 : 2;
+      score += includesTerm(normalizedTitle, term) ? 4 : 2;
     }
     if (matched) tags.push(tag);
   }
-  for (const term of policy.architectureSignals ?? ARCHITECTURE_SIGNALS) {
-    if (body.includes(term.toLowerCase())) {
+  let computationalMatchCount = 0;
+  for (const term of policy.computationalSignals ?? COMPUTATIONAL_SIGNALS) {
+    if (includesTerm(body, term)) {
       matchedTerms.push(term);
+      computationalMatchCount += 1;
       score += 1;
     }
   }
   for (const term of policy.genomicsSignals ?? GENOMICS_SIGNALS) {
-    if (body.includes(term.toLowerCase())) {
+    if (includesTerm(body, term)) {
       matchedTerms.push(term);
       score += 1;
     }
   }
   for (const term of policy.negativeSignals ?? NEGATIVE_TERMS) {
-    if (body.includes(term.toLowerCase())) score -= 6;
+    if (includesTerm(body, term)) score -= 6;
   }
   return {
+    eligible: !policy.requireComputationalSignal || computationalMatchCount > 0,
     score: Math.max(0, Math.min(100, score)),
     tags,
     matchedTerms: uniqueStrings(matchedTerms),
   };
+}
+
+function searchableText(...values: string[]): string {
+  const normalized = values
+    .join(" ")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return ` ${normalized} `;
+}
+
+function includesTerm(searchable: string, term: string): boolean {
+  const normalizedTerm = searchableText(term).trim();
+  return (
+    normalizedTerm.length > 0 && searchable.includes(` ${normalizedTerm} `)
+  );
 }
 
 function mergeEnrichments(enrichments: readonly Enrichment[]): Enrichment {

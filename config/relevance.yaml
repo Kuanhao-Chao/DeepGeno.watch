@@ -1,14 +1,33 @@
 version: 1
-candidateThreshold: 0.38
+candidateThreshold: 0.35
+requireComputationalSignal: true
 positiveSignals:
-  architecture:
+  computational:
+    - deep learning
+    - machine learning
     - transformer
     - state space model
     - convolutional neural network
+    - neural network
     - foundation model
     - language model
     - self-supervised
     - representation learning
+    - predictive model
+    - computational model
+    - sequence model
+    - model architecture
+    - model training
+    - modelling
+    - modeling
+    - prediction framework
+    - algorithm
+    - classifier
+    - embedding
+    - encoder
+    - decoder
+    - ensemble
+    - in silico
   genomics:
     - genome
     - genomic

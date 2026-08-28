@@ -55,15 +55,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     );
   }
   if (config.arxiv.enabled) {
-    for (const set of config.arxiv.sets) {
+    for (const target of config.arxiv.targets) {
       sources.push(
         new ArxivOaiSource(http, {
-          set,
-          categoryPrefixes: config.arxiv.categories
-            .filter(
-              (category) => category.startsWith(`${set}.`) || category === set,
-            )
-            .map((category) => category.replace(/\*$/, "")),
+          id: target.id,
+          setSpec: target.setSpec,
+          categoryPrefixes: target.categoryPrefixes,
           overlapDays: config.arxiv.overlapDays,
           baseUrl: config.arxiv.baseUrl,
         }),

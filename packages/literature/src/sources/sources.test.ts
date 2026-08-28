@@ -95,7 +95,11 @@ describe("literature source adapters", () => {
       </OAI-PMH>`);
     const source = new ArxivOaiSource(
       { getText } as unknown as AllowlistedHttpClient,
-      { set: "q-bio", categoryPrefixes: ["q-bio."] },
+      {
+        id: "cs-lg",
+        setSpec: "cs:cs:LG",
+        categoryPrefixes: ["cs.LG"],
+      },
     );
 
     const result = await source.fetch({ from: "2026-08-27", to: "2026-08-28" });
@@ -111,7 +115,8 @@ describe("literature source adapters", () => {
     const requested = getText.mock.calls[0]![0] as URL;
     expect(requested.origin).toBe("https://oaipmh.arxiv.org");
     expect(requested.pathname).toBe("/oai");
-    expect(requested.searchParams.get("set")).toBe("q-bio");
+    expect(source.name).toBe("arxiv-cs-lg");
+    expect(requested.searchParams.get("set")).toBe("cs:cs:LG");
     expect(requested.searchParams.get("metadataPrefix")).toBe("arXiv");
   });
 

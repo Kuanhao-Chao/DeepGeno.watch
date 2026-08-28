@@ -2,13 +2,18 @@ id: arxiv
 kind: arxiv-oai
 enabled: true
 baseUrl: https://oaipmh.arxiv.org/oai
-sets:
-  - q-bio
-  - cs
-  - stat
-categories:
-  - q-bio.*
-  - cs.LG
-  - stat.ML
+targets:
+  - id: q-bio
+    setSpec: q-bio
+    categoryPrefixes:
+      - q-bio.
+  - id: cs
+    setSpec: cs:cs:LG
+    categoryPrefixes:
+      - cs.LG
+  - id: stat
+    setSpec: stat:stat:ML
+    categoryPrefixes:
+      - stat.ML
 overlapDays: 3
 requestDelayMs: 3100

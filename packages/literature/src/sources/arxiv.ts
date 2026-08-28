@@ -11,7 +11,8 @@ import { compactText } from "../util.js";
 type UnknownRecord = Record<string, unknown>;
 
 export interface ArxivSourceOptions {
-  set?: "q-bio" | "cs" | "stat";
+  id?: string;
+  setSpec?: string;
   categoryPrefixes?: readonly string[];
   maxPages?: number;
   overlapDays?: number;
@@ -34,7 +35,7 @@ export class ArxivOaiSource implements LiteratureSource {
   constructor(http: AllowlistedHttpClient, options: ArxivSourceOptions = {}) {
     this.#http = http;
     this.#options = options;
-    this.name = options.set ? `arxiv-${options.set}` : "arxiv";
+    this.name = options.id ? `arxiv-${options.id}` : "arxiv";
     this.overlapDays = options.overlapDays ?? 0;
     this.#baseUrl = new URL(options.baseUrl ?? "https://oaipmh.arxiv.org/oai");
   }
@@ -52,7 +53,8 @@ export class ArxivOaiSource implements LiteratureSource {
         url.searchParams.set("metadataPrefix", "arXiv");
         url.searchParams.set("from", request.from);
         url.searchParams.set("until", request.to);
-        if (this.#options.set) url.searchParams.set("set", this.#options.set);
+        if (this.#options.setSpec)
+          url.searchParams.set("set", this.#options.setSpec);
       }
       const xml = await this.#http.getText(url, {
         Accept: "application/xml, text/xml",
