@@ -50,8 +50,13 @@ Last updated: 2026-08-28
   through 2026-08-28) completed with 8 Candidates each, zero source warnings, no
   repository mutation, and no LLM call. Those runs exposed the upstream compatibility
   and latency improvements now covered by regression tests.
+- The tuned commit `67a4b32` passed remote CI and repeated the 2026-08-27 shadow window
+  in 1 minute 33 seconds with 14 Candidates, zero source warnings, no mutation, and no
+  model call.
 - Wrangler 4 is pinned locally and Cloudflare OAuth is valid; no Pages project has been
-  created, preserving the required Git-integration choice.
+  created, preserving the required Git-integration choice. The first Git-integrated
+  create request stopped safely with Cloudflare error `8000011`; the Cloudflare Workers
+  and Pages GitHub App must be repaired or reauthorized before retrying.
 
 ## Activation remaining
 
@@ -59,8 +64,9 @@ These still require an external account choice or a deliberately later rollout g
 
 1. Add the selected provider/model variables and exactly one provider API key after
    comparing one OpenAI and one Anthropic draft.
-2. Connect the repository to Cloudflare Pages, configure build watch paths, protect
-   previews, and attach the production domain.
+2. Repair the Cloudflare Workers and Pages GitHub App connection, then connect the
+   repository to Pages, configure build watch paths, protect previews, and attach the
+   production domain.
 3. After the model and site are ready, set `DEEPGENO_LIVE_INGESTION_ENABLED=true` and
    run one explicit manual live Gate 1 discovery.
 4. Run the bounded 90-day backfill after daily review volume is acceptable.
