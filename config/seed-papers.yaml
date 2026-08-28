@@ -1,0 +1,4 @@
+version: 1
+papers: []
+# Add DOI/arXiv/bioRxiv identifiers from the existing khc_website catalog here.
+# Seeds tune ranking only; they are never copied into the public summary catalog.

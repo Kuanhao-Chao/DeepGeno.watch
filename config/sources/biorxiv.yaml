@@ -1,0 +1,5 @@
+id: biorxiv
+kind: biorxiv
+enabled: true
+baseUrl: https://api.biorxiv.org
+overlapDays: 3

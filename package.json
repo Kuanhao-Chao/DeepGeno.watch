@@ -1,0 +1,35 @@
+{
+  "name": "deepgeno-watch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "node scripts/reset-web-content-cache.mjs && npm run build --workspace @deepgeno/web",
+    "dev": "npm run dev --workspace @deepgeno/web",
+    "check": "npm run typecheck && npm test && npm run privacy",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "privacy": "node scripts/privacy-check.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "literature": "tsx packages/literature/src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.127.0",
+    "zod": "^4.4.3"
+  }
+}

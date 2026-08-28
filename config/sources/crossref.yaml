@@ -1,0 +1,22 @@
+id: crossref-journals
+kind: crossref
+enabled: true
+baseUrl: https://api.crossref.org
+mailtoEnv: CROSSREF_MAILTO
+cursorRows: 100
+overlapDays: 3
+journals:
+  - name: Nature
+    issn: 0028-0836
+  - name: Science
+    issn: 0036-8075
+  - name: Cell
+    issn: 0092-8674
+  - name: Nature Genetics
+    issn: 1061-4036
+  - name: Nature Biotechnology
+    issn: 1087-0156
+  - name: Bioinformatics
+    issn: 1367-4803
+  - name: Genome Biology
+    issn: 1474-760X

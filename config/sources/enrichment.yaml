@@ -1,0 +1,12 @@
+europePmc:
+  enabled: true
+  baseUrl: https://www.ebi.ac.uk/europepmc/webservices/rest
+  preferOpenAccessJats: true
+  discoverJournals: true
+  pageSize: 100
+  overlapDays: 3
+openAlex:
+  enabled: true
+  baseUrl: https://api.openalex.org
+  singletonDoiOnly: true
+  apiKeyEnv: OPENALEX_API_KEY

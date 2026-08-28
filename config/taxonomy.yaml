@@ -1,0 +1,63 @@
+version: 1
+topics:
+  sequence-to-function:
+    label: Sequence to function
+    phrases:
+      - sequence-to-function
+      - regulatory sequence activity
+      - genomic sequence model
+  dna-language-model:
+    label: DNA language models
+    phrases:
+      - DNA language model
+      - genomic foundation model
+      - genome language model
+      - nucleotide transformer
+  rna-language-model:
+    label: RNA language models
+    phrases:
+      - RNA language model
+      - transcriptome foundation model
+      - RNA foundation model
+  protein-language-model:
+    label: Protein language models
+    phrases:
+      - protein language model
+      - protein foundation model
+  variant-effect-prediction:
+    label: Variant effect prediction
+    phrases:
+      - variant effect prediction
+      - pathogenicity prediction
+      - saturation mutagenesis
+  gene-regulation:
+    label: Gene regulation
+    phrases:
+      - gene regulation
+      - enhancer prediction
+      - promoter activity
+  epigenomics:
+    label: Epigenomics
+    phrases:
+      - chromatin accessibility
+      - epigenomic
+      - histone modification
+  single-cell-deep-learning:
+    label: Single-cell learning
+    phrases:
+      - single-cell
+      - scRNA-seq
+      - cell atlas
+  structural-bioinformatics:
+    label: Structural bioinformatics
+    phrases:
+      - protein structure prediction
+      - RNA structure
+      - molecular structure
+modalities:
+  - DNA
+  - RNA
+  - protein
+  - chromatin
+  - single-cell
+  - structure

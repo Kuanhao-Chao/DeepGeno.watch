@@ -1,0 +1,89 @@
+---
+import '@fontsource-variable/hanken-grotesk';
+import '@fontsource-variable/inter';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  image?: string;
+}
+
+const {
+  title = 'DeepGeno Watch',
+  description = 'Human-curated research tracking for computational genomics and genomic language models.',
+  image,
+} = Astro.props;
+const pageTitle = title === 'DeepGeno Watch' ? title : `${title} · DeepGeno Watch`;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site) : Astro.url;
+const path = Astro.url.pathname;
+
+const nav = [
+  { href: '/papers/', label: 'Papers' },
+  { href: '/reading-list/', label: 'Reading list' },
+  { href: '/methodology/', label: 'Methodology' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111614" media="(prefers-color-scheme: dark)" />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate" type="application/rss+xml" title="DeepGeno Watch" href="/feed.xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    {image && <meta property="og:image" content={new URL(image, canonical)} />}
+    <meta name="twitter:card" content="summary" />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <header class="site-header">
+      <div class="container site-header__inner">
+        <a class="wordmark" href="/" aria-label="DeepGeno Watch home">
+          <span class="wordmark__mark" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </span>
+          <span>DeepGeno<span class="wordmark__watch">.watch</span></span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <ul>
+            {nav.map((item) => {
+              const current = path === item.href || (item.href !== '/' && path.startsWith(item.href));
+              return (
+                <li>
+                  <a href={item.href} aria-current={current ? 'page' : undefined}>{item.label}</a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+      </div>
+    </header>
+    <main id="main-content">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="container site-footer__inner">
+        <div>
+          <p class="site-footer__name">DeepGeno Watch</p>
+          <p>Curated with automation, published with human judgment.</p>
+        </div>
+        <nav aria-label="Footer navigation">
+          <a href="/catalog.json">JSON catalog</a>
+          <a href="/feed.xml">RSS feed</a>
+          <a href="/methodology/">How it works</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,243 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+---
+
+<PageLayout
+  title="Methodology"
+  eyebrow="Transparent by design"
+  lead="DeepGeno Watch automates collection and drafting, but reserves editorial authority for people. These boundaries explain what reaches the public catalog—and what does not."
+  width="narrow"
+>
+  <section class="method-section" aria-labelledby="workflow-title">
+    <p class="section-number">01</p>
+    <h2 id="workflow-title">Two gates, one public record</h2>
+    <ol class="pipeline" aria-label="Publication workflow">
+      <li><span>Monitor</span><p>Official APIs surface source records from preprint servers, bibliographic indexes, and selected journals.</p></li>
+      <li><span>Normalize</span><p>Records are deduplicated, tagged, and ranked. A complete abstract is required before triage.</p></li>
+      <li class="pipeline__gate"><span>Human gate 1</span><p>A curator chooses exactly one action: Summarize, Defer, or Dismiss. Candidate data stays private.</p></li>
+      <li><span>Synthesize</span><p>The selected paper becomes an evidence packet. A configured model produces a strict structured draft with claim-level evidence IDs.</p></li>
+      <li class="pipeline__gate"><span>Human gate 2</span><p>One pull request per paper exposes the draft, evidence depth, provider, model, and integrity metadata for review.</p></li>
+      <li><span>Publish</span><p>Merging that pull request creates a canonical public record and triggers a fresh static build.</p></li>
+    </ol>
+  </section>
+
+  <section class="method-section" aria-labelledby="coverage-title">
+    <p class="section-number">02</p>
+    <h2 id="coverage-title">Coverage</h2>
+    <p>
+      The watchlist focuses on sequence-to-function models, DNA/RNA/protein language models,
+      variant effect prediction, gene regulation and epigenomics, single-cell deep learning, and
+      structural bioinformatics.
+    </p>
+    <dl class="source-grid">
+      <div><dt>Preprints</dt><dd>bioRxiv and arXiv q-bio, cs.LG, and stat.ML</dd></div>
+      <div><dt>Journals</dt><dd>Crossref metadata for a curated high-impact ISSN list</dd></div>
+      <div><dt>Enrichment</dt><dd>Europe PMC open-access text and OpenAlex DOI metadata</dd></div>
+      <div><dt>Cadence</dt><dd>Daily discovery with overlapping windows and durable source checkpoints</dd></div>
+    </dl>
+  </section>
+
+  <section class="method-section" aria-labelledby="evidence-title">
+    <p class="section-number">03</p>
+    <h2 id="evidence-title">Evidence depth</h2>
+    <p>
+      Each public summary states the strongest material available when it was drafted. “Abstract
+      only” means no accessible full text informed the synthesis. “Partial full text” means some
+      body material was available. “Full text” means the main paper was available through a lawful
+      source such as open-access JATS, HTML, or PDF.
+    </p>
+    <p>
+      Claims carry compact evidence IDs that resolve to source URLs, document types, locators, and
+      content digests. The site does not mirror publisher PDFs or figures. A digest verifies input
+      identity; it does not independently validate a scientific claim.
+    </p>
+  </section>
+
+  <section class="method-section" aria-labelledby="llm-title">
+    <p class="section-number">04</p>
+    <h2 id="llm-title">How models are used</h2>
+    <p>
+      OpenAI and Anthropic are supported through separate structured-output adapters. The active
+      provider and model must be explicitly configured, and there is no silent provider failover.
+      Models synthesize an evidence packet into typed fields; they do not browse, call tools, or
+      decide what gets published.
+    </p>
+    <ul class="guardrail-list">
+      <li>Source text is treated as untrusted input.</li>
+      <li>Generated output must pass the shared schema and evidence-reference checks.</li>
+      <li>Generated strings are escaped and rendered as structured fields—never raw HTML or MDX.</li>
+      <li>Provider, model, prompt version, schema version, input digest, and human approval remain public.</li>
+    </ul>
+  </section>
+
+  <section class="method-section" aria-labelledby="meaning-title">
+    <p class="section-number">05</p>
+    <h2 id="meaning-title">Editorial labels</h2>
+    <div class="label-grid">
+      <div><h3>Must-Read</h3><p>High expected value for the core research agenda.</p></div>
+      <div><h3>Recommended</h3><p>Material contribution with broad or practical relevance.</p></div>
+      <div><h3>Notable</h3><p>Worth tracking, even if narrower or more incremental.</p></div>
+      <div><h3>Queued / Skimmed / Read</h3><p>Progress through the editorial reading workflow; not a quality score.</p></div>
+    </div>
+  </section>
+
+  <aside class="scope-note">
+    <h2>What this is not</h2>
+    <p>
+      DeepGeno Watch is a curated discovery aid, not peer review, clinical guidance, or a complete
+      index of genomics research. Summaries may contain errors despite evidence checks and human
+      review; follow the original paper before relying on a result.
+    </p>
+  </aside>
+</PageLayout>
+
+<style>
+  .method-section + .method-section {
+    margin-top: clamp(4rem, 9vw, 7rem);
+    padding-top: clamp(2rem, 5vw, 3.5rem);
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .section-number {
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+  }
+
+  h2 {
+    margin-top: 0.35rem;
+    font-size: clamp(1.65rem, 4vw, 2.55rem);
+  }
+
+  .method-section > p:not(.section-number) {
+    margin-top: 1.1rem;
+    color: var(--color-ink-soft);
+  }
+
+  .pipeline {
+    margin-top: 2rem;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+    counter-reset: steps;
+  }
+
+  .pipeline li {
+    display: grid;
+    grid-template-columns: minmax(7.5rem, 0.55fr) minmax(0, 2fr);
+    gap: 1.25rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--color-rule);
+    counter-increment: steps;
+  }
+
+  .pipeline li::before {
+    display: none;
+    content: counter(steps);
+  }
+
+  .pipeline span {
+    color: var(--color-accent-strong);
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 650;
+  }
+
+  .pipeline p {
+    color: var(--color-muted);
+    font-size: 0.85rem;
+  }
+
+  .pipeline__gate {
+    background: linear-gradient(90deg, var(--color-accent-soft), transparent 78%);
+  }
+
+  .source-grid,
+  .label-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 2rem;
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .source-grid div,
+  .label-grid div {
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .source-grid div:nth-child(odd),
+  .label-grid div:nth-child(odd) {
+    padding-right: 1rem;
+  }
+
+  .source-grid div:nth-child(even),
+  .label-grid div:nth-child(even) {
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-rule);
+  }
+
+  dt,
+  .label-grid h3 {
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  dd,
+  .label-grid p {
+    margin-top: 0.35rem;
+    color: var(--color-muted);
+    font-size: 0.78rem;
+  }
+
+  .guardrail-list {
+    margin-top: 1.3rem;
+    padding-left: 1.15rem;
+  }
+
+  .guardrail-list li {
+    padding-left: 0.25rem;
+  }
+
+  .guardrail-list li + li {
+    margin-top: 0.55rem;
+  }
+
+  .scope-note {
+    margin-top: clamp(4rem, 9vw, 7rem);
+    padding: 1.4rem;
+    border: 1px solid var(--color-rule);
+    border-left: 2px solid var(--color-accent);
+    background: var(--color-surface);
+  }
+
+  .scope-note h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  .scope-note p {
+    margin-top: 0.55rem;
+    color: var(--color-muted);
+    font-size: 0.82rem;
+  }
+
+  @media (max-width: 34rem) {
+    .pipeline li,
+    .source-grid,
+    .label-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .pipeline li {
+      gap: 0.35rem;
+    }
+
+    .source-grid div:nth-child(n),
+    .label-grid div:nth-child(n) {
+      padding-inline: 0;
+      border-left: 0;
+    }
+  }
+</style>

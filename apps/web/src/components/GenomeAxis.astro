@@ -1,0 +1,50 @@
+<div class="genome-axis" aria-hidden="true">
+  <svg viewBox="0 0 960 34" role="presentation" preserveAspectRatio="none">
+    <path class="axis-line" d="M0 17H960" />
+    <g class="ticks">
+      <path d="M45 10v14M101 13v8M157 13v8M213 8v18M269 13v8M325 13v8M381 10v14" />
+      <path d="M579 10v14M635 13v8M691 13v8M747 8v18M803 13v8M859 13v8M915 10v14" />
+    </g>
+    <path class="gene gene-a" d="M399 17h55m0 0-8-7m8 7-8 7" />
+    <path class="gene gene-b" d="M561 17h-75m0 0 8-7m-8 7 8 7" />
+    <circle class="locus" cx="470" cy="17" r="3.5" />
+  </svg>
+</div>
+
+<style>
+  .genome-axis {
+    width: 100%;
+    color: var(--color-rule-strong);
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: 2.125rem;
+    overflow: visible;
+  }
+
+  path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .ticks {
+    opacity: 0.72;
+  }
+
+  .gene {
+    stroke: var(--color-accent);
+    stroke-width: 1.5;
+  }
+
+  .gene-b {
+    opacity: 0.62;
+  }
+
+  .locus {
+    fill: var(--color-accent);
+  }
+</style>

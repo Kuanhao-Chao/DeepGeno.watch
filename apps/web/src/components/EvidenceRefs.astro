@@ -1,0 +1,44 @@
+---
+interface Props {
+  ids: string[];
+}
+
+const { ids } = Astro.props;
+---
+
+{ids.length > 0 && (
+  <span class="evidence-refs" aria-label={`Evidence: ${ids.join(', ')}`}>
+    {ids.map((id) => <a href={`#evidence-${encodeURIComponent(id)}`}>{id}</a>)}
+  </span>
+)}
+
+<style>
+  .evidence-refs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.22rem;
+    margin-left: 0.4rem;
+    vertical-align: 0.12em;
+  }
+
+  a {
+    display: inline-flex;
+    min-width: 1.35rem;
+    min-height: 1.2rem;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 0.25rem;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: var(--radius);
+    color: var(--color-accent-strong);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    line-height: 1;
+    text-decoration: none;
+  }
+
+  a:hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+</style>

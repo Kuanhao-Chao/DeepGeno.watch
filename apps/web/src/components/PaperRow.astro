@@ -1,0 +1,194 @@
+---
+import type { PaperEntry } from '../lib/papers';
+import {
+  evidenceLabel,
+  formatAuthors,
+  formatDate,
+  paperDate,
+  paperHref,
+  priorityRank,
+} from '../lib/papers';
+import StatusBadge from './StatusBadge.astro';
+
+interface Props {
+  paper: PaperEntry;
+}
+
+const { paper } = Astro.props;
+const { data } = paper;
+const searchText = [
+  data.title,
+  data.hook,
+  data.authors.join(' '),
+  data.venue,
+  data.tags.join(' '),
+  data.topics.join(' '),
+  data.organisms.join(' '),
+  data.modalities.join(' '),
+]
+  .filter(Boolean)
+  .join(' ')
+  .toLocaleLowerCase();
+const date = paperDate(paper);
+---
+
+<li
+  class="paper-row"
+  data-paper
+  data-date={date.toISOString()}
+  data-priority={data.priority}
+  data-priority-rank={priorityRank(data.priority)}
+  data-progress={data.progress}
+  data-tags={JSON.stringify(data.tags.map((tag) => tag.toLocaleLowerCase()))}
+  data-search={searchText}
+>
+  <article>
+    <div class="paper-row__date">
+      <time datetime={date.toISOString()}>{formatDate(date)}</time>
+      <span>{data.venue ?? data.source}</span>
+    </div>
+    <div class="paper-row__body">
+      <h2><a href={paperHref(paper)}>{data.title}</a></h2>
+      <p class="paper-row__authors">{formatAuthors(data.authors, true)}</p>
+      <p class="paper-row__hook">{data.hook}</p>
+      {data.tags.length > 0 && (
+        <ul class="tag-list" aria-label="Topics">
+          {data.tags.slice(0, 5).map((tag) => <li>{tag}</li>)}
+        </ul>
+      )}
+    </div>
+    <div class="paper-row__state">
+      <StatusBadge value={data.priority} kind="priority" />
+      <StatusBadge value={data.progress} kind="progress" />
+      <span class="evidence-note">{evidenceLabel(data.evidence.scope)}</span>
+    </div>
+  </article>
+</li>
+
+<style>
+  .paper-row {
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .paper-row:last-child {
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  article {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.72fr) minmax(0, 3.7fr) minmax(8.4rem, 0.85fr);
+    gap: clamp(1rem, 3vw, 2.25rem);
+    padding: clamp(1.3rem, 3vw, 2rem) 0;
+  }
+
+  .paper-row__date,
+  .paper-row__state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .paper-row__date {
+    color: var(--color-muted);
+    font-size: var(--fs-small);
+  }
+
+  .paper-row__date time {
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+
+  h2 {
+    max-width: 40ch;
+    font-size: clamp(1.18rem, 1.9vw, 1.52rem);
+    line-height: 1.2;
+  }
+
+  h2 a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  h2 a:hover {
+    color: var(--color-accent-strong);
+  }
+
+  h2 a:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 0.25rem;
+  }
+
+  .paper-row__authors {
+    margin-top: 0.48rem;
+    color: var(--color-muted);
+    font-size: var(--fs-small);
+  }
+
+  .paper-row__hook {
+    max-width: 62ch;
+    margin-top: 0.75rem;
+    color: var(--color-ink-soft);
+    line-height: 1.55;
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.9rem;
+  }
+
+  .tag-list li {
+    padding: 0.12rem 0.42rem;
+    background: var(--color-surface-muted);
+    border-radius: var(--radius);
+    color: var(--color-muted);
+    font-size: 0.75rem;
+  }
+
+  .paper-row__state {
+    justify-self: end;
+  }
+
+  .evidence-note {
+    max-width: 12rem;
+    margin-top: 0.18rem;
+    color: var(--color-muted);
+    font-size: 0.74rem;
+    line-height: 1.35;
+  }
+
+  @media (max-width: 50rem) {
+    article {
+      grid-template-columns: 1fr auto;
+    }
+
+    .paper-row__date {
+      grid-column: 1 / -1;
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+
+    .paper-row__state {
+      grid-column: 2;
+      grid-row: 2;
+    }
+  }
+
+  @media (max-width: 36rem) {
+    article {
+      display: block;
+    }
+
+    .paper-row__state {
+      flex-flow: row wrap;
+      margin-top: 1rem;
+    }
+
+    .evidence-note {
+      flex-basis: 100%;
+    }
+  }
+</style>

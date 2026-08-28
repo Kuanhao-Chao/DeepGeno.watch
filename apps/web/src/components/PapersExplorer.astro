@@ -1,0 +1,239 @@
+---
+import type { PaperEntry } from '../lib/papers';
+import { uniqueValues } from '../lib/papers';
+import EmptyState from './EmptyState.astro';
+import PaperRow from './PaperRow.astro';
+
+interface Props {
+  papers: PaperEntry[];
+  action?: string;
+  defaultProgress?: 'all' | 'queued' | 'skimmed' | 'read';
+}
+
+const { papers, action = '/papers/', defaultProgress = 'all' } = Astro.props;
+const tags = uniqueValues(papers, 'tags');
+---
+
+<section class="explorer" data-explorer data-default-progress={defaultProgress}>
+  <form class="filters" method="get" action={action} data-filter-form>
+    <label class="filters__search">
+      <span>Search the catalog</span>
+      <input
+        type="search"
+        name="q"
+        placeholder="Architecture, organism, author…"
+        autocomplete="off"
+      />
+    </label>
+    <label>
+      <span>Topic</span>
+      <select name="tag">
+        <option value="">All topics</option>
+        {tags.map((tag) => <option value={tag}>{tag}</option>)}
+      </select>
+    </label>
+    <label>
+      <span>Priority</span>
+      <select name="priority">
+        <option value="">All priorities</option>
+        <option value="must-read">Must-Read</option>
+        <option value="recommended">Recommended</option>
+        <option value="notable">Notable</option>
+      </select>
+    </label>
+    <label>
+      <span>Progress</span>
+      <select name="progress">
+        <option value="">All progress</option>
+        <option value="queued">Queued</option>
+        <option value="skimmed">Skimmed</option>
+        <option value="read">Read</option>
+      </select>
+    </label>
+    <label>
+      <span>Sort</span>
+      <select name="sort">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="priority">Priority</option>
+      </select>
+    </label>
+    <div class="filters__actions">
+      <button type="submit">Apply</button>
+      <a href={action} data-clear>Clear</a>
+    </div>
+  </form>
+
+  <div class="results-head">
+    <p aria-live="polite" data-result-count>
+      {papers.length} {papers.length === 1 ? 'paper' : 'papers'}
+    </p>
+    <p>Only human-approved summaries are searchable.</p>
+  </div>
+
+  {papers.length > 0 ? (
+    <>
+      <ul class="paper-list" data-paper-list>
+        {papers.map((paper) => <PaperRow paper={paper} />)}
+      </ul>
+      <div class="filtered-empty" data-filtered-empty hidden>
+        <EmptyState
+          title="No papers match these filters"
+          description="Try a broader search or clear one of the status filters."
+        />
+      </div>
+    </>
+  ) : (
+    <EmptyState />
+  )}
+</section>
+
+<script is:inline src="/explorer.js"></script>
+
+<style>
+  .explorer {
+    margin-top: var(--space-8);
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: minmax(14rem, 2fr) repeat(4, minmax(8.2rem, 1fr)) auto;
+    gap: 0.7rem;
+    align-items: end;
+    padding: 1rem;
+    border: 1px solid var(--color-rule);
+    background: var(--color-surface);
+  }
+
+  label {
+    display: grid;
+    gap: 0.38rem;
+    min-width: 0;
+  }
+
+  label > span {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  input,
+  select {
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.48rem 0.62rem;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font: inherit;
+    font-size: 0.88rem;
+  }
+
+  input:focus,
+  select:focus {
+    border-color: var(--color-accent);
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 1px;
+  }
+
+  .filters__actions {
+    display: flex;
+    gap: 0.65rem;
+    align-items: center;
+    min-height: 2.5rem;
+  }
+
+  button {
+    min-height: 2.5rem;
+    padding: 0.45rem 0.88rem;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+
+  button:hover {
+    background: var(--color-accent-strong);
+  }
+
+  .filters__actions a {
+    color: var(--color-muted);
+    font-size: 0.8rem;
+  }
+
+  .results-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1.1rem;
+    padding-bottom: 0.8rem;
+    color: var(--color-muted);
+    font-size: 0.78rem;
+  }
+
+  .results-head [data-result-count] {
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-weight: 600;
+  }
+
+  .paper-list {
+    list-style: none;
+  }
+
+  .filtered-empty {
+    margin-top: 1rem;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+
+  @media (max-width: 70rem) {
+    .filters {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .filters__search {
+      grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 46rem) {
+    .filters {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .filters__search,
+    .filters__actions {
+      grid-column: 1 / -1;
+    }
+
+    .results-head {
+      display: block;
+    }
+
+    .results-head p + p {
+      margin-top: 0.3rem;
+    }
+  }
+
+  @media (max-width: 28rem) {
+    .filters {
+      grid-template-columns: 1fr;
+    }
+
+    .filters__search,
+    .filters__actions {
+      grid-column: auto;
+    }
+  }
+</style>

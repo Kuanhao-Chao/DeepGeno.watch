@@ -1,0 +1,49 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'No approved papers yet',
+  description = 'The public catalog only includes summaries that passed both human review gates.',
+} = Astro.props;
+---
+
+<div class="empty-state">
+  <span class="empty-state__mark" aria-hidden="true">∅</span>
+  <div>
+    <h2>{title}</h2>
+    <p>{description}</p>
+  </div>
+</div>
+
+<style>
+  .empty-state {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1rem;
+    align-items: start;
+    padding: clamp(1.3rem, 3vw, 2rem);
+    border: 1px solid var(--color-rule);
+    background: var(--color-surface);
+  }
+
+  .empty-state__mark {
+    color: var(--color-accent);
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+
+  h2 {
+    font-size: 1.08rem;
+  }
+
+  p {
+    max-width: 58ch;
+    margin-top: 0.35rem;
+    color: var(--color-muted);
+    font-size: var(--fs-small);
+  }
+</style>

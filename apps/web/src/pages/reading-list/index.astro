@@ -1,0 +1,73 @@
+---
+import PapersExplorer from '../../components/PapersExplorer.astro';
+import PageLayout from '../../layouts/PageLayout.astro';
+import { getPapers } from '../../lib/papers';
+
+const papers = await getPapers();
+const counts = {
+  queued: papers.filter((paper) => paper.data.progress === 'queued').length,
+  skimmed: papers.filter((paper) => paper.data.progress === 'skimmed').length,
+  read: papers.filter((paper) => paper.data.progress === 'read').length,
+};
+---
+
+<PageLayout
+  title="Reading list"
+  eyebrow="Editorial workflow"
+  lead="A public view of what is queued, skimmed, and read. It is an editorial status—not a claim about paper quality."
+>
+  <dl class="progress-summary">
+    <div><dt>Queued</dt><dd>{counts.queued}</dd></div>
+    <div><dt>Skimmed</dt><dd>{counts.skimmed}</dd></div>
+    <div><dt>Read</dt><dd>{counts.read}</dd></div>
+  </dl>
+  <PapersExplorer papers={papers} action="/reading-list/" defaultProgress="queued" />
+</PageLayout>
+
+<style>
+  .progress-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--color-rule);
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .progress-summary div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem clamp(0.8rem, 2vw, 1.5rem);
+  }
+
+  .progress-summary div + div {
+    border-left: 1px solid var(--color-rule);
+  }
+
+  dt {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 620;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+  }
+
+  dd {
+    color: var(--color-accent-strong);
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 580;
+  }
+
+  @media (max-width: 32rem) {
+    .progress-summary {
+      grid-template-columns: 1fr;
+    }
+
+    .progress-summary div + div {
+      border-top: 1px solid var(--color-rule);
+      border-left: 0;
+    }
+  }
+</style>

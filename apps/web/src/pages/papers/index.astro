@@ -1,0 +1,15 @@
+---
+import PapersExplorer from '../../components/PapersExplorer.astro';
+import PageLayout from '../../layouts/PageLayout.astro';
+import { getPapers } from '../../lib/papers';
+
+const papers = await getPapers();
+---
+
+<PageLayout
+  title="Paper catalog"
+  eyebrow="Approved summaries"
+  lead="Search the computational genomics papers that passed both curation gates. Filter by topic, editorial priority, or reading progress; every view has a shareable URL."
+>
+  <PapersExplorer papers={papers} />
+</PageLayout>

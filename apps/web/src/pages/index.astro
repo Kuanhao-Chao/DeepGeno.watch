@@ -1,0 +1,347 @@
+---
+import EmptyState from '../components/EmptyState.astro';
+import GenomeAxis from '../components/GenomeAxis.astro';
+import PaperRow from '../components/PaperRow.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { getPapers, uniqueValues } from '../lib/papers';
+
+const papers = await getPapers();
+const latest = papers.slice(0, 5);
+const topics = uniqueValues(papers, 'tags').slice(0, 8);
+const mustRead = papers.filter((paper) => paper.data.priority === 'must-read').length;
+const fullText = papers.filter((paper) => paper.data.evidence.fullTextAvailable).length;
+---
+
+<BaseLayout>
+  <section class="hero">
+    <div class="container hero__grid">
+      <div class="hero__copy">
+        <p class="eyebrow">Literature signal for genomic AI</p>
+        <h1>Find the work that changes how sequence becomes function.</h1>
+        <p class="hero__lead">
+          Automated discovery across preprints and journals, followed by two human review gates.
+          Every public summary exposes what evidence it used.
+        </p>
+        <div class="hero__actions">
+          <a class="button" href="/papers/">Explore papers</a>
+          <a class="text-link" href="/methodology/">Inspect the method <span aria-hidden="true">→</span></a>
+        </div>
+      </div>
+      <aside class="signal-card" aria-label="Catalog snapshot">
+        <p class="signal-card__label">Approved catalog</p>
+        <dl>
+          <div><dt>Summaries</dt><dd>{papers.length}</dd></div>
+          <div><dt>Must-read</dt><dd>{mustRead}</dd></div>
+          <div><dt>Full-text informed</dt><dd>{fullText}</dd></div>
+        </dl>
+        <p class="signal-card__note">Private candidates never appear here.</p>
+      </aside>
+    </div>
+    <div class="container hero__axis"><GenomeAxis /></div>
+  </section>
+
+  <section class="topics" aria-labelledby="topics-title">
+    <div class="container topics__inner">
+      <div>
+        <p class="eyebrow">Focus domains</p>
+        <h2 id="topics-title">A deliberately narrow watchlist</h2>
+      </div>
+      <ul>
+        {(topics.length > 0
+          ? topics
+          : [
+              'Genomic language models',
+              'Sequence to function',
+              'Variant effects',
+              'Gene regulation',
+              'Single-cell learning',
+              'Structural bioinformatics',
+            ]
+        ).map((topic) => (
+          <li>
+            <a href={`/papers/?tag=${encodeURIComponent(topic)}`}>{topic}</a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <section class="latest" aria-labelledby="latest-title">
+    <div class="container">
+      <header class="section-head">
+        <div>
+          <p class="eyebrow">Recently approved</p>
+          <h2 id="latest-title">Latest reading</h2>
+        </div>
+        <a href="/papers/">View the full catalog <span aria-hidden="true">→</span></a>
+      </header>
+      {latest.length > 0 ? (
+        <ul class="paper-list">
+          {latest.map((paper) => <PaperRow paper={paper} />)}
+        </ul>
+      ) : (
+        <EmptyState />
+      )}
+    </div>
+  </section>
+
+  <section class="principle">
+    <div class="container principle__grid">
+      <p class="principle__index">01—02</p>
+      <h2>Automation finds candidates. People decide what deserves attention.</h2>
+      <p>
+        The daily inbox is private. A curator selects what may be summarized, then reviews each
+        synthesis in its own pull request before publication. The public site is the end of that
+        process—not a mirror of an RSS feed.
+      </p>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero {
+    padding-top: clamp(3.6rem, 9vw, 8rem);
+  }
+
+  .hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 23rem);
+    gap: clamp(3rem, 8vw, 8rem);
+    align-items: end;
+  }
+
+  .hero h1 {
+    max-width: 15ch;
+    margin-top: 1rem;
+    font-size: clamp(3rem, 8vw, 6.8rem);
+    line-height: 0.96;
+  }
+
+  .hero__lead {
+    max-width: 61ch;
+    margin-top: clamp(1.5rem, 3vw, 2.25rem);
+    color: var(--color-muted);
+    font-size: clamp(1.05rem, 1.5vw, 1.24rem);
+  }
+
+  .hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    align-items: center;
+    margin-top: 2rem;
+  }
+
+  .button {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    font-family: var(--font-display);
+    font-size: 0.88rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .button:hover {
+    background: var(--color-accent-strong);
+  }
+
+  .text-link {
+    font-family: var(--font-display);
+    font-size: 0.88rem;
+    font-weight: 550;
+  }
+
+  .signal-card {
+    border-top: 2px solid var(--color-accent);
+    border-bottom: 1px solid var(--color-rule);
+    padding: 1.1rem 0 1.2rem;
+  }
+
+  .signal-card__label {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .signal-card dl {
+    margin-top: 1rem;
+  }
+
+  .signal-card dl div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 0.55rem;
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .signal-card dt {
+    color: var(--color-muted);
+    font-size: 0.82rem;
+  }
+
+  .signal-card dd {
+    font-family: var(--font-display);
+    font-size: 1.35rem;
+    font-weight: 580;
+  }
+
+  .signal-card__note {
+    margin-top: 0.7rem;
+    color: var(--color-muted);
+    font-size: 0.72rem;
+  }
+
+  .hero__axis {
+    margin-top: clamp(3.5rem, 8vw, 7rem);
+  }
+
+  .topics {
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .topics__inner {
+    display: grid;
+    grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.6fr);
+    gap: clamp(2rem, 7vw, 6rem);
+    padding-block: clamp(3.5rem, 7vw, 6rem);
+  }
+
+  .topics h2,
+  .section-head h2 {
+    margin-top: 0.45rem;
+    font-size: clamp(1.7rem, 3.3vw, 2.65rem);
+  }
+
+  .topics ul {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    align-self: start;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+  }
+
+  .topics li {
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .topics li:nth-child(odd) {
+    padding-right: 1rem;
+  }
+
+  .topics li:nth-child(even) {
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-rule);
+  }
+
+  .topics a {
+    display: block;
+    padding-block: 0.72rem;
+    color: var(--color-ink-soft);
+    font-size: 0.86rem;
+    text-decoration: none;
+  }
+
+  .topics a::before {
+    margin-right: 0.55rem;
+    color: var(--color-accent);
+    content: '↳';
+  }
+
+  .latest {
+    padding-block: clamp(4rem, 9vw, 8rem);
+  }
+
+  .section-head {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+
+  .section-head > a {
+    font-family: var(--font-display);
+    font-size: 0.84rem;
+    font-weight: 550;
+  }
+
+  .paper-list {
+    list-style: none;
+  }
+
+  .principle {
+    border-top: 1px solid var(--color-rule);
+    background: var(--color-surface);
+  }
+
+  .principle__grid {
+    display: grid;
+    grid-template-columns: 0.35fr 1.65fr 1fr;
+    gap: clamp(1.5rem, 5vw, 5rem);
+    padding-block: clamp(4rem, 9vw, 7rem);
+  }
+
+  .principle__index {
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+  }
+
+  .principle h2 {
+    max-width: 22ch;
+    font-size: clamp(1.8rem, 3.6vw, 3.2rem);
+  }
+
+  .principle__grid > p:last-child {
+    color: var(--color-muted);
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 48rem) {
+    .hero__grid,
+    .topics__inner,
+    .principle__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.75rem, 14vw, 5rem);
+    }
+
+    .signal-card {
+      max-width: 26rem;
+    }
+
+    .section-head {
+      display: block;
+    }
+
+    .section-head > a {
+      display: inline-block;
+      margin-top: 1rem;
+    }
+  }
+
+  @media (max-width: 32rem) {
+    .topics ul {
+      grid-template-columns: 1fr;
+    }
+
+    .topics li:nth-child(n) {
+      padding-inline: 0;
+      border-left: 0;
+    }
+  }
+</style>

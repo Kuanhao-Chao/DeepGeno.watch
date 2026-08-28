@@ -1,0 +1,18 @@
+# Reference profiles for choosing environment values. This example is not loaded at
+# runtime: GitHub/environment variables remain the explicit source of truth. There is
+# intentionally no default provider/model and no failover.
+activeProfile: null
+profiles:
+  openai-lean:
+    provider: openai
+    model: REPLACE_WITH_EXPLICIT_OPENAI_MODEL_ID
+    apiKeyEnv: OPENAI_API_KEY
+    maxOutputTokens: 5000
+  anthropic-lean:
+    provider: anthropic
+    model: REPLACE_WITH_EXPLICIT_ANTHROPIC_MODEL_ID
+    apiKeyEnv: ANTHROPIC_API_KEY
+    maxOutputTokens: 5000
+budget:
+  monthlyUsd: 15
+  maxSummariesPerRun: 20

@@ -1,0 +1,36 @@
+name: Literature review validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: literature-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate review choices
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'literature-inbox') ||
+      contains(github.event.pull_request.labels.*.name, 'summary-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Validate immutable markers and bounded choices
+        run: node scripts/github/automation.mjs triage-check
+        env:
+          DEEPGENO_MAX_SUMMARIES_PER_RUN: ${{ vars.DEEPGENO_MAX_SUMMARIES_PER_RUN || '20' }}

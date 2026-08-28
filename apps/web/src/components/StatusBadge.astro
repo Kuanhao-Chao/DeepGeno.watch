@@ -1,0 +1,45 @@
+---
+import { titleCase } from '../lib/papers';
+
+interface Props {
+  value: string;
+  kind?: 'priority' | 'progress' | 'evidence';
+}
+
+const { value, kind = 'progress' } = Astro.props;
+---
+
+<span class:list={['status-badge', `status-badge--${kind}`, `status-badge--${value}`]}>{titleCase(value)}</span>
+
+<style>
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0.16rem 0.46rem;
+    border: 1px solid var(--color-rule-strong);
+    border-radius: var(--radius);
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .status-badge--priority {
+    border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-rule));
+    color: var(--color-accent-strong);
+  }
+
+  .status-badge--must-read {
+    background: var(--color-accent-soft);
+  }
+
+  .status-badge--read {
+    border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-rule));
+    color: var(--color-success);
+  }
+</style>

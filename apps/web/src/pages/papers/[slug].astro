@@ -1,0 +1,752 @@
+---
+import EvidenceRefs from '../../components/EvidenceRefs.astro';
+import GenomeAxis from '../../components/GenomeAxis.astro';
+import StatusBadge from '../../components/StatusBadge.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import {
+  evidenceLabel,
+  formatAuthors,
+  formatDate,
+  getPapers,
+  paperDate,
+  paperSlug,
+  titleCase,
+  type PaperEntry,
+} from '../../lib/papers';
+
+export async function getStaticPaths() {
+  const papers = await getPapers();
+  return papers.map((paper) => ({
+    params: { slug: paperSlug(paper) },
+    props: { paper },
+  }));
+}
+
+interface Props {
+  paper: PaperEntry;
+}
+
+const { paper } = Astro.props;
+const { data } = paper;
+const date = paperDate(paper);
+
+const modelFacts = [
+  ['Model family', data.architecture.modelFamily],
+  ['Parameter scale', data.architecture.parameterScale],
+  ['Representation', data.architecture.representation],
+  ['Tokenization', data.architecture.tokenization],
+  ['Context length', data.architecture.contextLength],
+].filter((fact): fact is [string, string] => Boolean(fact[1]));
+
+function formatLocator(locator: (typeof data.evidence.sources)[number]['locator']): string {
+  return [
+    locator.section,
+    locator.paragraph ? `paragraph ${locator.paragraph}` : undefined,
+    locator.page ? `page ${locator.page}` : undefined,
+    locator.figure ? `figure ${locator.figure}` : undefined,
+    locator.table ? `table ${locator.table}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+---
+
+<BaseLayout title={data.title} description={data.hook}>
+  <article class="paper-detail">
+    <header class="paper-head container">
+      <a class="back-link" href="/papers/"><span aria-hidden="true">←</span> Paper catalog</a>
+      <div class="paper-head__grid">
+        <div>
+          <div class="paper-head__badges">
+            <StatusBadge value={data.priority} kind="priority" />
+            <StatusBadge value={data.progress} kind="progress" />
+          </div>
+          <h1>{data.title}</h1>
+          <p class="authors">{formatAuthors(data.authors)}</p>
+          <p class="hook">{data.hook}</p>
+        </div>
+        <dl class="paper-meta">
+          <div><dt>Published</dt><dd><time datetime={date.toISOString()}>{formatDate(date)}</time></dd></div>
+          <div><dt>Venue</dt><dd>{data.venue ?? titleCase(data.source)}</dd></div>
+          <div><dt>Evidence</dt><dd>{evidenceLabel(data.evidence.scope)}</dd></div>
+          <div><dt>Reviewed</dt><dd><time datetime={data.provenance.review.approvedAt.toISOString()}>{formatDate(data.provenance.review.approvedAt)}</time></dd></div>
+        </dl>
+      </div>
+      <div class="source-links" aria-label="Paper resources">
+        <a href={data.url} rel="noreferrer">Source paper <span aria-hidden="true">↗</span></a>
+        {data.pdfUrl && <a href={data.pdfUrl} rel="noreferrer">PDF <span aria-hidden="true">↗</span></a>}
+        {data.doi && <a href={`https://doi.org/${data.doi}`} rel="noreferrer">DOI <span aria-hidden="true">↗</span></a>}
+        {data.codeUrl && <a href={data.codeUrl} rel="noreferrer">Code <span aria-hidden="true">↗</span></a>}
+        {data.dataUrl && <a href={data.dataUrl} rel="noreferrer">Data <span aria-hidden="true">↗</span></a>}
+      </div>
+      <div class="paper-head__axis"><GenomeAxis /></div>
+    </header>
+
+    <div class="container detail-grid">
+      <nav class="section-nav" aria-label="On this page">
+        <p>In this summary</p>
+        <ol>
+          <li><a href="#problem">Problem & novelty</a></li>
+          <li><a href="#architecture">Architecture & data</a></li>
+          <li><a href="#results">Results</a></li>
+          <li><a href="#takeaways">Takeaways</a></li>
+          <li><a href="#provenance">Evidence & provenance</a></li>
+        </ol>
+      </nav>
+
+      <div class="summary">
+        <section id="problem" class="summary-section">
+          <p class="section-index">01</p>
+          <h2>Core problem & novelty</h2>
+          <div class="statement statement--lead">
+            <p>{data.coreProblem.statement}<EvidenceRefs ids={data.coreProblem.evidenceIds} /></p>
+          </div>
+          <ul class="claim-list">
+            {data.novelty.map((item) => (
+              <li>{item.statement}<EvidenceRefs ids={item.evidenceIds} /></li>
+            ))}
+          </ul>
+        </section>
+
+        <section id="architecture" class="summary-section">
+          <p class="section-index">02</p>
+          <h2>Architecture & data</h2>
+          <div class="statement">
+            <p>{data.architecture.overview}<EvidenceRefs ids={data.architecture.evidenceIds} /></p>
+          </div>
+          {modelFacts.length > 0 && (
+            <dl class="fact-grid">
+              {modelFacts.map(([label, value]) => <div><dt>{label}</dt><dd>{value}</dd></div>)}
+            </dl>
+          )}
+          {data.architecture.trainingObjectives.length > 0 && (
+            <div class="subsection">
+              <h3>Training objectives</h3>
+              <ul class="compact-list">{data.architecture.trainingObjectives.map((objective) => <li>{objective}</li>)}</ul>
+            </div>
+          )}
+          {(data.datasets.length > 0 || data.benchmarks.length > 0) && (
+            <div class="data-columns">
+              <div>
+                <h3>Datasets</h3>
+                {data.datasets.length > 0 ? (
+                  <ul class="dataset-list">
+                    {data.datasets.map((dataset) => (
+                      <li>
+                        <p><strong>{dataset.name}</strong> <span>{titleCase(dataset.role)}</span></p>
+                        {dataset.scale && <p>{dataset.scale}</p>}
+                        {dataset.organisms.length > 0 && <p>{dataset.organisms.join(', ')}</p>}
+                        <EvidenceRefs ids={dataset.evidenceIds} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p class="not-reported">Not reported.</p>}
+              </div>
+              <div>
+                <h3>Benchmarks</h3>
+                {data.benchmarks.length > 0 ? (
+                  <ul class="dataset-list">
+                    {data.benchmarks.map((benchmark) => (
+                      <li>
+                        <p><strong>{benchmark.name}</strong> <span>{titleCase(benchmark.role)}</span></p>
+                        {benchmark.scale && <p>{benchmark.scale}</p>}
+                        {benchmark.organisms.length > 0 && <p>{benchmark.organisms.join(', ')}</p>}
+                        <EvidenceRefs ids={benchmark.evidenceIds} />
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p class="not-reported">Not reported.</p>}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section id="results" class="summary-section">
+          <p class="section-index">03</p>
+          <h2>Key results</h2>
+          {data.results.length > 0 ? (
+            <ol class="result-list">
+              {data.results.map((result) => (
+                <li>
+                  <div class="result-list__metric">
+                    <strong>{result.value ?? result.delta ?? 'Result'}</strong>
+                    {result.metric && <span>{result.metric}</span>}
+                  </div>
+                  <div>
+                    <p>{result.claim}<EvidenceRefs ids={result.evidenceIds} /></p>
+                    {(result.benchmark || result.baseline) && (
+                      <p class="result-list__context">
+                        {[result.benchmark, result.baseline && `baseline: ${result.baseline}`].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p class="not-reported">No quantitative result was safe to extract from the available evidence.</p>
+          )}
+        </section>
+
+        <section id="takeaways" class="summary-section">
+          <p class="section-index">04</p>
+          <h2>Takeaways</h2>
+          <ol class="takeaway-list">
+            {data.takeaways.map((item) => (
+              <li><span>{item.statement}</span><EvidenceRefs ids={item.evidenceIds} /></li>
+            ))}
+          </ol>
+          {data.limitations.length > 0 && (
+            <aside class="limitations">
+              <h3>Limitations & open questions</h3>
+              <ul>
+                {data.limitations.map((item) => (
+                  <li>{item.statement}<EvidenceRefs ids={item.evidenceIds} /></li>
+                ))}
+              </ul>
+            </aside>
+          )}
+          <div class="taxonomy">
+            <div><h3>Topics</h3><ul>{data.topics.map((item) => <li>{titleCase(item)}</li>)}</ul></div>
+            {data.organisms.length > 0 && <div><h3>Organisms</h3><ul>{data.organisms.map((item) => <li>{item}</li>)}</ul></div>}
+            {data.modalities.length > 0 && <div><h3>Modalities</h3><ul>{data.modalities.map((item) => <li>{item}</li>)}</ul></div>}
+          </div>
+        </section>
+
+        <section id="provenance" class="summary-section provenance">
+          <p class="section-index">05</p>
+          <h2>Evidence & provenance</h2>
+          <p class="provenance__intro">
+            Claims above point to these source locators. Evidence links open the original source;
+            generated text is rendered as plain structured fields, never executable markup.
+          </p>
+          <ol class="evidence-list">
+            {data.evidence.sources.map((source) => (
+              <li id={`evidence-${source.id}`}>
+                <span class="evidence-list__id">{source.id}</span>
+                <div>
+                  <p><strong>{titleCase(source.documentKind)}</strong> · {formatLocator(source.locator)}</p>
+                  <a href={source.sourceUrl} rel="noreferrer">Open evidence source <span aria-hidden="true">↗</span></a>
+                  <p class="digest">SHA-256 {source.contentSha256}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <dl class="provenance-grid">
+            <div><dt>Model</dt><dd>{titleCase(data.provenance.generation.provider)} · {data.provenance.generation.model}</dd></div>
+            <div><dt>Generated</dt><dd><time datetime={data.provenance.generation.generatedAt.toISOString()}>{formatDate(data.provenance.generation.generatedAt)}</time></dd></div>
+            <div><dt>Prompt</dt><dd>{data.provenance.generation.prompt.id} v{data.provenance.generation.prompt.version}</dd></div>
+            <div><dt>Schema</dt><dd>v{data.provenance.generation.outputSchemaVersion}</dd></div>
+            <div><dt>Human review</dt><dd>{data.provenance.review.approvedBy.displayName ?? data.provenance.review.approvedBy.id}</dd></div>
+            <div><dt>Draft revision</dt><dd>{data.provenance.review.draftId} · r{data.provenance.review.draftRevision}</dd></div>
+          </dl>
+          <details>
+            <summary>Integrity digests</summary>
+            <dl class="digest-list">
+              <div><dt>Input</dt><dd>{data.provenance.generation.inputSha256}</dd></div>
+              <div><dt>Prompt</dt><dd>{data.provenance.generation.prompt.sha256}</dd></div>
+              {data.provenance.review.commitSha && <div><dt>Commit</dt><dd>{data.provenance.review.commitSha}</dd></div>}
+            </dl>
+          </details>
+        </section>
+      </div>
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .paper-head {
+    padding-top: clamp(2.3rem, 6vw, 4.5rem);
+  }
+
+  .back-link {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    font-weight: 550;
+    text-decoration: none;
+  }
+
+  .paper-head__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(13rem, 19rem);
+    gap: clamp(2.5rem, 8vw, 8rem);
+    align-items: end;
+    margin-top: clamp(2rem, 5vw, 3.5rem);
+  }
+
+  .paper-head__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-bottom: 1rem;
+  }
+
+  h1 {
+    max-width: 22ch;
+    font-size: clamp(2.15rem, 5.8vw, 5rem);
+    line-height: 1.02;
+  }
+
+  .authors {
+    max-width: 70ch;
+    margin-top: 1.1rem;
+    color: var(--color-muted);
+    font-size: 0.88rem;
+  }
+
+  .hook {
+    max-width: 66ch;
+    margin-top: 1.35rem;
+    color: var(--color-ink-soft);
+    font-size: clamp(1.08rem, 1.8vw, 1.35rem);
+    line-height: 1.5;
+  }
+
+  .paper-meta {
+    border-top: 1px solid var(--color-rule-strong);
+  }
+
+  .paper-meta div {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: 1rem;
+    padding-block: 0.58rem;
+    border-bottom: 1px solid var(--color-rule);
+    font-size: 0.76rem;
+  }
+
+  dt {
+    color: var(--color-muted);
+  }
+
+  dd {
+    overflow-wrap: anywhere;
+  }
+
+  .source-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem 1.3rem;
+    margin-top: 1.7rem;
+  }
+
+  .source-links a {
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 580;
+  }
+
+  .paper-head__axis {
+    margin-top: clamp(2rem, 5vw, 4rem);
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.55fr) minmax(0, 2.4fr);
+    gap: clamp(2.5rem, 8vw, 7rem);
+    padding-top: clamp(2rem, 5vw, 4rem);
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+
+  .section-nav {
+    position: sticky;
+    top: 1.5rem;
+    align-self: start;
+    border-top: 1px solid var(--color-rule-strong);
+    padding-top: 0.8rem;
+  }
+
+  .section-nav p {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.68rem;
+    font-weight: 650;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .section-nav ol {
+    margin-top: 0.65rem;
+    list-style: none;
+  }
+
+  .section-nav li + li {
+    margin-top: 0.3rem;
+  }
+
+  .section-nav a {
+    color: var(--color-muted);
+    font-size: 0.76rem;
+    text-decoration: none;
+  }
+
+  .summary {
+    min-width: 0;
+  }
+
+  .summary-section {
+    scroll-margin-top: 1.5rem;
+  }
+
+  .summary-section + .summary-section {
+    margin-top: clamp(4rem, 8vw, 7rem);
+    padding-top: clamp(2.2rem, 4vw, 3.5rem);
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .section-index {
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+  }
+
+  .summary-section > h2 {
+    margin-top: 0.3rem;
+    font-size: clamp(1.7rem, 3.2vw, 2.65rem);
+  }
+
+  .statement {
+    max-width: 68ch;
+    margin-top: 1.4rem;
+    color: var(--color-ink-soft);
+  }
+
+  .statement--lead {
+    font-size: clamp(1.04rem, 1.4vw, 1.17rem);
+  }
+
+  .claim-list,
+  .compact-list {
+    max-width: 68ch;
+    margin-top: 1.2rem;
+    padding-left: 1.2rem;
+  }
+
+  .claim-list li,
+  .compact-list li {
+    padding-left: 0.25rem;
+  }
+
+  .claim-list li + li,
+  .compact-list li + li {
+    margin-top: 0.65rem;
+  }
+
+  .fact-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 1.8rem;
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .fact-grid div {
+    padding: 0.9rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .fact-grid div:nth-child(odd) {
+    padding-right: 1rem;
+  }
+
+  .fact-grid div:nth-child(even) {
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-rule);
+  }
+
+  .fact-grid dt,
+  .provenance-grid dt,
+  .digest-list dt {
+    color: var(--color-muted);
+    font-family: var(--font-display);
+    font-size: 0.66rem;
+    font-weight: 640;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .fact-grid dd {
+    margin-top: 0.25rem;
+    font-size: 0.88rem;
+  }
+
+  .subsection,
+  .data-columns {
+    margin-top: 2rem;
+  }
+
+  .subsection h3,
+  .data-columns h3,
+  .limitations h3,
+  .taxonomy h3 {
+    font-size: 0.85rem;
+    letter-spacing: 0;
+  }
+
+  .data-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
+  }
+
+  .dataset-list {
+    margin-top: 0.6rem;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+  }
+
+  .dataset-list > li {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--color-rule);
+    font-size: 0.78rem;
+  }
+
+  .dataset-list strong {
+    font-family: var(--font-display);
+  }
+
+  .dataset-list p > span,
+  .dataset-list p + p,
+  .not-reported {
+    color: var(--color-muted);
+  }
+
+  .not-reported {
+    margin-top: 1rem;
+    font-size: 0.86rem;
+  }
+
+  .result-list {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+  }
+
+  .result-list > li {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.5fr) minmax(0, 2fr);
+    gap: 1.5rem;
+    padding: 1.2rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .result-list__metric strong,
+  .result-list__metric span {
+    display: block;
+  }
+
+  .result-list__metric strong {
+    color: var(--color-accent-strong);
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+  }
+
+  .result-list__metric span,
+  .result-list__context {
+    color: var(--color-muted);
+    font-size: 0.72rem;
+  }
+
+  .result-list__context {
+    margin-top: 0.4rem;
+  }
+
+  .takeaway-list {
+    margin-top: 1.6rem;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+    counter-reset: takeaways;
+  }
+
+  .takeaway-list > li {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--color-rule);
+    counter-increment: takeaways;
+  }
+
+  .takeaway-list > li::before {
+    color: var(--color-accent);
+    content: counter(takeaways, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 0.67rem;
+  }
+
+  .limitations {
+    margin-top: 2rem;
+    padding: 1.2rem;
+    border-left: 2px solid var(--color-accent);
+    background: var(--color-surface);
+  }
+
+  .limitations ul {
+    margin-top: 0.65rem;
+    padding-left: 1rem;
+    color: var(--color-ink-soft);
+    font-size: 0.84rem;
+  }
+
+  .limitations li + li {
+    margin-top: 0.5rem;
+  }
+
+  .taxonomy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem 3rem;
+    margin-top: 2rem;
+  }
+
+  .taxonomy ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    list-style: none;
+  }
+
+  .taxonomy li {
+    padding: 0.18rem 0.45rem;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius);
+    color: var(--color-muted);
+    font-size: 0.7rem;
+  }
+
+  .provenance__intro {
+    max-width: 66ch;
+    margin-top: 1.2rem;
+    color: var(--color-muted);
+    font-size: 0.86rem;
+  }
+
+  .evidence-list {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--color-rule);
+    list-style: none;
+  }
+
+  .evidence-list > li {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr;
+    gap: 1rem;
+    scroll-margin-top: 1.5rem;
+    padding: 0.85rem 0;
+    border-bottom: 1px solid var(--color-rule);
+    font-size: 0.76rem;
+  }
+
+  .evidence-list__id {
+    color: var(--color-accent-strong);
+    font-family: var(--font-mono);
+  }
+
+  .digest {
+    margin-top: 0.28rem;
+    overflow-wrap: anywhere;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+  }
+
+  .provenance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 2rem;
+    border-top: 1px solid var(--color-rule);
+  }
+
+  .provenance-grid div {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .provenance-grid div:nth-child(odd) {
+    padding-right: 1rem;
+  }
+
+  .provenance-grid div:nth-child(even) {
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-rule);
+  }
+
+  .provenance-grid dd {
+    margin-top: 0.25rem;
+    font-size: 0.78rem;
+  }
+
+  details {
+    margin-top: 1.5rem;
+  }
+
+  summary {
+    cursor: pointer;
+    color: var(--color-accent-strong);
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .digest-list {
+    margin-top: 0.8rem;
+  }
+
+  .digest-list div {
+    display: grid;
+    grid-template-columns: 4rem 1fr;
+    gap: 1rem;
+    padding: 0.4rem 0;
+  }
+
+  .digest-list dd {
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+  }
+
+  @media (max-width: 52rem) {
+    .paper-head__grid,
+    .detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .paper-meta {
+      max-width: 28rem;
+    }
+
+    .section-nav {
+      position: static;
+    }
+
+    .section-nav ol {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 1rem;
+    }
+  }
+
+  @media (max-width: 38rem) {
+    .fact-grid,
+    .data-columns,
+    .provenance-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .fact-grid div:nth-child(n),
+    .provenance-grid div:nth-child(n) {
+      padding-inline: 0;
+      border-left: 0;
+    }
+
+    .result-list > li {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+
+    .takeaway-list > li {
+      grid-template-columns: auto 1fr;
+    }
+  }
+</style>

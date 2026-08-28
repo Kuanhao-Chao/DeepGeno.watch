@@ -1,0 +1,58 @@
+---
+import GenomeAxis from '../components/GenomeAxis.astro';
+import BaseLayout from './BaseLayout.astro';
+
+interface Props {
+  title: string;
+  eyebrow?: string;
+  lead?: string;
+  description?: string;
+  width?: 'wide' | 'narrow';
+}
+
+const { title, eyebrow, lead, description, width = 'wide' } = Astro.props;
+---
+
+<BaseLayout title={title} description={description ?? lead}>
+  <header class="page-head">
+    <div class:list={['container', width === 'narrow' && 'container--narrow']}>
+      {eyebrow && <p class="eyebrow">{eyebrow}</p>}
+      <h1>{title}</h1>
+      {lead && <p class="lead">{lead}</p>}
+      <div class="page-head__axis"><GenomeAxis /></div>
+    </div>
+  </header>
+  <div class:list={['container', width === 'narrow' && 'container--narrow', 'page-body']}>
+    <slot />
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    padding-top: clamp(3rem, 8vw, 6rem);
+  }
+
+  .page-head h1 {
+    max-width: 20ch;
+    margin-top: 0.65rem;
+  }
+
+  .lead {
+    max-width: 68ch;
+    margin-top: 1.15rem;
+    color: var(--color-muted);
+  }
+
+  .page-head__axis {
+    margin-top: clamp(2rem, 5vw, 3.5rem);
+  }
+
+  .container--narrow {
+    max-width: var(--container-narrow);
+  }
+
+  .page-body {
+    padding-top: clamp(2rem, 4vw, 3.25rem);
+    padding-bottom: clamp(4rem, 9vw, 7.5rem);
+  }
+</style>
