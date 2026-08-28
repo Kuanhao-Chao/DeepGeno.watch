@@ -1,7 +1,7 @@
 id: arxiv
 kind: arxiv-oai
 enabled: true
-baseUrl: https://export.arxiv.org/oai2
+baseUrl: https://oaipmh.arxiv.org/oai
 sets:
   - q-bio
   - cs

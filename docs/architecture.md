@@ -60,9 +60,9 @@ or provider adapters.
 Discovery uses official or community-supported metadata interfaces only:
 
 - bioRxiv date-window API, with three-day overlap and upsert
-- arXiv OAI-PMH for `q-bio`, `cs`, and `stat`, post-filtered to `q-bio.*`, `cs.LG`,
-  and `stat.ML`
-- Crossref journal/ISSN polling using index dates and cursor pagination
+- arXiv OAI-PMH through its canonical `oaipmh.arxiv.org` endpoint for `q-bio`, `cs`,
+  and `stat`, post-filtered to `q-bio.*`, `cs.LG`, and `stat.ML`
+- Crossref journal/ISSN polling using stable created-date windows and cursor pagination
 - Europe PMC core journal search to recover complete abstracts that Crossref omits
 - Europe PMC DOI/PMID enrichment and open-access JATS when available
 - OpenAlex singleton DOI enrichment, not bulk discovery
@@ -74,7 +74,9 @@ private evidence; otherwise synthesis is explicitly marked abstract-only.
 ## Failure model
 
 One malformed source record or unavailable enrichment endpoint is quarantined and
-reported without erasing successful records. Provider errors never trigger a hidden
+reported without erasing successful records. The shared outbound client paces each
+configured host and retries bounded transient/429 responses; Crossref uses the polite
+pool and stays below its list-request budget. Provider errors never trigger a hidden
 failover. Schema-invalid synthesis remains private and retryable. Storage corruption or
 an inability to commit state is fatal because partial gate transitions are unsafe.
 

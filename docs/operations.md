@@ -13,7 +13,8 @@
    `DEEPGENO_MODEL_PROVIDER`, `DEEPGENO_MODEL_NAME`, and optionally
    `DEEPGENO_MODEL_MAX_OUTPUT_TOKENS` (default `5000`). Add only the corresponding
    `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` environment secret.
-4. Add repository variable `DEEPGENO_MAX_SUMMARIES_PER_RUN` (default `20`) and optional
+4. Add repository variables `DEEPGENO_MAX_SUMMARIES_PER_RUN` (default `20`),
+   `DEEPGENO_LIVE_INGESTION_ENABLED` (start with `false`), and optional
    `CROSSREF_MAILTO`. Add optional repository secret `OPENALEX_API_KEY`.
 5. Optional: add a fine-grained repository secret named `DEEPGENO_GITHUB_TOKEN` with
    contents, issues, and pull-request write access. Without it, PRs created by the
@@ -27,7 +28,9 @@
 ## Workflow map
 
 - `Literature ingestion` runs at 06:17 in `America/Los_Angeles` and supports manual,
-  replay, explicit date-window, bounded 90-day backfill, and shadow inputs.
+  replay, explicit date-window, bounded 90-day backfill, and shadow inputs. Scheduled
+  and manual runs default to shadow; scheduled mutation is possible only when the
+  repository variable `DEEPGENO_LIVE_INGESTION_ENABLED` is exactly `true`.
 - `Literature review validation` reads the PR body from the event but checks out and
   executes only `main`. It validates immutable markers, exactly one action per item,
   approval status choices, revision feedback, and synthesis fan-out.
@@ -43,8 +46,8 @@
    silent failover; compare the structured drafts and record the chosen production
    provider/model explicitly.
 3. Connect Cloudflare Pages, configure build watch paths, and protect previews.
-4. Enable live candidate PR creation and operate the daily loop until review volume is
-   predictable.
+4. Set `DEEPGENO_LIVE_INGESTION_ENABLED=true`, run one explicit manual live discovery,
+   and operate the daily loop until review volume is predictable.
 5. Backfill the previous 90 days in no more than 30-day batches. Merge or close each
    candidate PR before proceeding when review load becomes uncomfortable.
 

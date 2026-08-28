@@ -32,7 +32,7 @@ on:
       shadow:
         description: Discover and report without commits or pull requests
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -68,6 +68,6 @@ jobs:
           INPUT_THROUGH: ${{ github.event.inputs.through }}
           INPUT_BACKFILL_DAYS: ${{ github.event.inputs.backfill_days || '0' }}
           INPUT_BATCH_DAYS: ${{ github.event.inputs.batch_days || '30' }}
-          INPUT_SHADOW: ${{ github.event.inputs.shadow || 'false' }}
+          INPUT_SHADOW: ${{ github.event_name == 'schedule' && vars.DEEPGENO_LIVE_INGESTION_ENABLED != 'true' && 'true' || github.event.inputs.shadow || 'false' }}
           CROSSREF_MAILTO: ${{ vars.CROSSREF_MAILTO }}
           OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}

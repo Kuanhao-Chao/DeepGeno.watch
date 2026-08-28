@@ -29,7 +29,22 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const root = path.resolve(parsed.flags.root ?? process.cwd());
   const config = await loadPipelineConfig(root);
   const store = new GitFileStateStore(root);
-  const http = new AllowlistedHttpClient();
+  const http = new AllowlistedHttpClient({
+    minimumIntervalMsByHost: {
+      ...(config.arxiv.enabled
+        ? {
+            [new URL(config.arxiv.baseUrl).hostname]:
+              config.arxiv.requestDelayMs,
+          }
+        : {}),
+      ...(config.crossref.enabled
+        ? {
+            [new URL(config.crossref.baseUrl).hostname]:
+              config.crossref.requestDelayMs,
+          }
+        : {}),
+    },
+  });
   const sources: LiteratureSource[] = [];
   if (config.biorxiv.enabled) {
     sources.push(
@@ -49,7 +64,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
               (category) => category.startsWith(`${set}.`) || category === set,
             )
             .map((category) => category.replace(/\*$/, "")),
-          requestDelayMs: config.arxiv.requestDelayMs,
           overlapDays: config.arxiv.overlapDays,
           baseUrl: config.arxiv.baseUrl,
         }),

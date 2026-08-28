@@ -5,6 +5,7 @@ baseUrl: https://api.crossref.org
 mailtoEnv: CROSSREF_MAILTO
 cursorRows: 100
 overlapDays: 3
+requestDelayMs: 350
 journals:
   - name: Nature
     issn: 0028-0836

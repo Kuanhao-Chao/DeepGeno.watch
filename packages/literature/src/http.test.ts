@@ -58,4 +58,56 @@ describe("AllowlistedHttpClient", () => {
       code: "source_invalid_json",
     });
   });
+
+  it("paces concurrent requests through one shared host budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImplementation = vi
+        .fn()
+        .mockImplementation(
+          async () => new Response("ok", { status: 200 }),
+        ) as unknown as typeof fetch;
+      const http = new AllowlistedHttpClient({
+        allowedHosts: ["allowed.example"],
+        fetchImplementation,
+        minimumIntervalMsByHost: { "allowed.example": 100 },
+      });
+
+      const first = http.getText("https://allowed.example/first");
+      const second = http.getText("https://allowed.example/second");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImplementation).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(99);
+      expect(fetchImplementation).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.all([first, second]);
+      expect(fetchImplementation).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries a rate-limited request before surfacing a source error", async () => {
+    const fetchImplementation = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "Retry-After": "0" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("ok", { status: 200 }),
+      ) as unknown as typeof fetch;
+    const http = new AllowlistedHttpClient({
+      allowedHosts: ["allowed.example"],
+      fetchImplementation,
+    });
+
+    await expect(http.getText("https://allowed.example/data")).resolves.toBe(
+      "ok",
+    );
+    expect(fetchImplementation).toHaveBeenCalledTimes(2);
+  });
 });

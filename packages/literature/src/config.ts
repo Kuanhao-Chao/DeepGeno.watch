@@ -37,6 +37,7 @@ const crossrefSchema = z.object({
   mailtoEnv: nonEmpty,
   cursorRows: z.number().int().min(1).max(1_000),
   overlapDays: z.number().int().nonnegative(),
+  requestDelayMs: z.number().int().nonnegative(),
   journals: z.array(z.object({ name: nonEmpty, issn: nonEmpty })).min(1),
 });
 

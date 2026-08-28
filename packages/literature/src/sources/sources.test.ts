@@ -10,18 +10,22 @@ import { OpenAlexDoiEnricher } from "./openalex.js";
 
 describe("literature source adapters", () => {
   it("pages bioRxiv date windows and preserves complete metadata", async () => {
-    const getJson = vi
+    const getText = vi
       .fn()
-      .mockResolvedValueOnce({
-        messages: [{ count: 1, total: 2 }],
-        collection: [bioRxivItem("10.1101/one", "1")],
-      })
-      .mockResolvedValueOnce({
-        messages: [{ count: 1, total: 2 }],
-        collection: [bioRxivItem("10.1101/two", "2")],
-      });
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          messages: [{ count: 1, total: 2 }],
+          collection: [bioRxivItem("10.1101/one", "1")],
+        }),
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          messages: [{ count: 1, total: 2 }],
+          collection: [bioRxivItem("10.1101/two", "2")],
+        }),
+      );
     const source = new BioRxivSource(
-      { getJson } as unknown as AllowlistedHttpClient,
+      { getText } as unknown as AllowlistedHttpClient,
       {
         overlapDays: 3,
       },
@@ -36,9 +40,24 @@ describe("literature source adapters", () => {
       authors: ["Ada Genome", "Lin Sequence"],
       pdfUrl: "https://www.biorxiv.org/content/10.1101/onev1.full.pdf",
     });
-    expect(String(getJson.mock.calls[1]![0])).toContain(
+    expect(String(getText.mock.calls[1]![0])).toContain(
       "/2026-08-25/2026-08-28/1",
     );
+  });
+
+  it("treats bioRxiv's empty successful current-day response as no records", async () => {
+    const getText = vi.fn().mockResolvedValue("");
+    const source = new BioRxivSource({
+      getText,
+    } as unknown as AllowlistedHttpClient);
+
+    const result = await source.fetch({
+      from: "2026-08-28",
+      to: "2026-08-28",
+    });
+
+    expect(result).toEqual({ records: [] });
+    expect(getText).toHaveBeenCalledOnce();
   });
 
   it("parses arXiv OAI records and applies the configured category boundary", async () => {
@@ -76,7 +95,7 @@ describe("literature source adapters", () => {
       </OAI-PMH>`);
     const source = new ArxivOaiSource(
       { getText } as unknown as AllowlistedHttpClient,
-      { set: "q-bio", categoryPrefixes: ["q-bio."], requestDelayMs: 0 },
+      { set: "q-bio", categoryPrefixes: ["q-bio."] },
     );
 
     const result = await source.fetch({ from: "2026-08-27", to: "2026-08-28" });
@@ -90,6 +109,8 @@ describe("literature source adapters", () => {
       pdfUrl: "https://arxiv.org/pdf/2608.12345",
     });
     const requested = getText.mock.calls[0]![0] as URL;
+    expect(requested.origin).toBe("https://oaipmh.arxiv.org");
+    expect(requested.pathname).toBe("/oai");
     expect(requested.searchParams.get("set")).toBe("q-bio");
     expect(requested.searchParams.get("metadataPrefix")).toBe("arXiv");
   });
@@ -135,7 +156,7 @@ describe("literature source adapters", () => {
     });
     const requested = getJson.mock.calls[0]![0] as URL;
     expect(requested.searchParams.get("filter")).toBe(
-      "from-index-date:2026-08-25,until-index-date:2026-08-28",
+      "from-created-date:2026-08-25,until-created-date:2026-08-28",
     );
   });
 

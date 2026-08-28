@@ -14,7 +14,6 @@ export interface ArxivSourceOptions {
   set?: "q-bio" | "cs" | "stat";
   categoryPrefixes?: readonly string[];
   maxPages?: number;
-  requestDelayMs?: number;
   overlapDays?: number;
   baseUrl?: string;
 }
@@ -37,7 +36,7 @@ export class ArxivOaiSource implements LiteratureSource {
     this.#options = options;
     this.name = options.set ? `arxiv-${options.set}` : "arxiv";
     this.overlapDays = options.overlapDays ?? 0;
-    this.#baseUrl = new URL(options.baseUrl ?? "https://export.arxiv.org/oai2");
+    this.#baseUrl = new URL(options.baseUrl ?? "https://oaipmh.arxiv.org/oai");
   }
 
   async fetch(request: SourceFetchRequest): Promise<SourceFetchResult> {
@@ -45,9 +44,6 @@ export class ArxivOaiSource implements LiteratureSource {
     const records: SourceDocument[] = [];
     const maxPages = this.#options.maxPages ?? 100;
     for (let page = 0; page < maxPages; page += 1) {
-      if (page > 0 && (this.#options.requestDelayMs ?? 3_100) > 0) {
-        await delay(this.#options.requestDelayMs ?? 3_100);
-      }
       const url = new URL(this.#baseUrl);
       url.searchParams.set("verb", "ListRecords");
       if (token) {
@@ -133,10 +129,6 @@ function arxivRecord(record: UnknownRecord): SourceDocument | undefined {
       journalReference: textValue(arxiv?.["journal-ref"]),
     },
   };
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function nested(object: UnknownRecord, ...keys: string[]): unknown {

@@ -64,7 +64,7 @@ export class CrossrefIssnSource implements LiteratureSource {
       );
       url.searchParams.set(
         "filter",
-        `from-index-date:${request.from},until-index-date:${request.to}`,
+        `from-created-date:${request.from},until-created-date:${request.to}`,
       );
       url.searchParams.set(
         "select",

@@ -1,4 +1,5 @@
 import { compactText } from "../util.js";
+import { LiteratureError } from "../errors.js";
 import type {
   LiteratureSource,
   SourceDocument,
@@ -61,7 +62,20 @@ export class BioRxivSource implements LiteratureSource {
         `/details/biorxiv/${encodeURIComponent(request.from)}/${encodeURIComponent(request.to)}/${cursor}`,
         this.#baseUrl,
       );
-      const response = await this.#http.getJson<BioRxivResponse>(url);
+      const text = await this.#http.getText(url, {
+        Accept: "application/json",
+      });
+      if (!text.trim()) return { records };
+      let response: BioRxivResponse;
+      try {
+        response = JSON.parse(text) as BioRxivResponse;
+      } catch (error) {
+        throw new LiteratureError(
+          "source_invalid_json",
+          "Source returned invalid JSON",
+          { cause: error },
+        );
+      }
       const items = response.collection ?? [];
       records.push(...items.map(toSourceDocument));
       const message = response.messages?.[0];
