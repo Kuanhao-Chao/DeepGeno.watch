@@ -161,3 +161,14 @@ npm test -- --run packages/literature/src/lifecycle.test.ts packages/literature/
 ```
 
 Result: 2 files passed, 15 tests passed.
+
+## Fix round 4: immutable-draft and CLI isolation proof
+
+Added a later approved draft for the already published paper after a mutable
+title refresh; publication fails with `publication_draft_mismatch` and retains
+the original sealed release. Added an offline `main(apply-triage)` integration
+test with distinct roots; the decision is written under only the state root.
+
+RED: the first empty-batch attempt was rejected by the real decision schema;
+the final test seeds one deterministic candidate and selects it through the
+rendered review form.

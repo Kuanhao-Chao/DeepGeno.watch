@@ -18,6 +18,7 @@ import type {
 import { parseCandidateReview, parseDraftReview } from "./review.js";
 import { FixtureSource } from "./sources/fixture.js";
 import { GitFileStateStore } from "./store.js";
+import { sha256, stableJson } from "./util.js";
 
 const roots: string[] = [];
 const now = "2026-08-28T07:00:00.000Z";
@@ -319,6 +320,40 @@ describe("LiteratureLifecycle", () => {
       publicDigest: publication.publicDigest,
       changedPaths: [],
     });
+
+    const { recordSha256: _oldRecord, ...laterCore } = revisedDraft;
+    const laterDraftCore = {
+      ...laterCore,
+      id: `${revisedDraft.id}-later`,
+      revision: revisedDraft.revision + 1,
+    };
+    const laterDraft = {
+      ...laterDraftCore,
+      recordSha256: sha256(stableJson(laterDraftCore)),
+    };
+    await store.saveDraft(laterDraft);
+    const laterProjection = await lifecycle.project({
+      kind: "draft-inbox",
+      draftId: laterDraft.id,
+    });
+    if (laterProjection.kind !== "draft-inbox")
+      throw new Error("Unexpected projection");
+    const laterApproval = parseDraftReview(
+      laterProjection.markdown
+        .replace("- [ ] Approve and publish", "- [x] Approve and publish")
+        .replace("- [ ] Must-Read", "- [x] Must-Read")
+        .replace("- [x] Recommended", "- [ ] Recommended"),
+      laterDraft,
+      { actor: { id: "curator", kind: "human" }, decidedAt: now },
+    );
+    await lifecycle.applyDecisions(laterApproval);
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: laterDraft.id }),
+    ).rejects.toMatchObject({ code: "publication_draft_mismatch" });
+    expect(await store.listPublications()).toHaveLength(1);
+    expect(new TextDecoder().decode(projectionFromRelease(release).bytes)).toBe(
+      sealedMarkdown,
+    );
 
     const catalog = await lifecycle.project({ kind: "public-catalog" });
     if (catalog.kind !== "public-catalog")
