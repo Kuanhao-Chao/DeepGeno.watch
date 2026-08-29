@@ -20,6 +20,16 @@ import {
 } from "@deepgeno/contracts";
 import type { Enrichment, SourceDocument } from "./ports.js";
 import { LiteratureError, invariant } from "./errors.js";
+import {
+  projectionFromRelease,
+  transitionDelivery as transitionDeliveryRecord,
+  validateDelivery,
+  validateDeliveryReleaseLink,
+  validateRelease,
+  type Delivery,
+  type DeliveryState,
+  type PrivateRelease,
+} from "./release.js";
 import { stableJson } from "./util.js";
 
 export interface StoredPaper {
@@ -280,20 +290,91 @@ export class GitFileStateStore {
     return values.map((value) => PublishedPaperSchema.parse(value));
   }
 
-  async writeReview(name: string, markdown: string): Promise<string> {
-    const target = this.privatePath("reviews", `${safeId(name)}.md`);
-    await this.writeText(target, markdown);
+  async saveRelease(release: PrivateRelease): Promise<string> {
+    projectionFromRelease(release);
+    const target = this.privatePath("releases", `${safeId(release.id)}.json`);
+    await this.writeImmutableJson(target, release);
     return target;
   }
 
-  async writePublicPaper(slug: string, markdown: string): Promise<string> {
-    const target = path.join(
-      this.root,
-      "content",
-      "public",
-      "papers",
-      `${safeId(slug)}.md`,
+  async loadReleaseForPublication(
+    slug: string,
+  ): Promise<PrivateRelease | undefined> {
+    const releases = (
+      await this.readDirectory<PrivateRelease>(this.privatePath("releases"))
+    ).map((release) => {
+      validateRelease(release);
+      return release;
+    });
+    const matches = releases.filter(
+      (release) => release.publicationSlug === slug,
     );
+    invariant(
+      matches.length <= 1,
+      "release_conflict",
+      `Multiple private releases exist for publication: ${slug}`,
+    );
+    const release = matches[0];
+    if (release) projectionFromRelease(release);
+    return release;
+  }
+
+  async saveDelivery(delivery: Delivery): Promise<string> {
+    validateDelivery(delivery);
+    const target = this.privatePath(
+      "deliveries",
+      `${safeId(delivery.id)}.json`,
+    );
+    await this.writeImmutableJson(target, delivery);
+    return target;
+  }
+
+  async transitionDelivery(
+    release: PrivateRelease,
+    state: DeliveryState,
+    updatedAt: string,
+  ): Promise<{ delivery: Delivery; path: string }> {
+    const existing = await this.loadDeliveryForRelease(release);
+    invariant(
+      existing,
+      "delivery_missing",
+      `Private delivery is missing for release: ${release.id}`,
+    );
+    const delivery = transitionDeliveryRecord(existing, state, updatedAt);
+    validateDeliveryReleaseLink(delivery, release);
+    const target = this.privatePath(
+      "deliveries",
+      `${safeId(delivery.id)}.json`,
+    );
+    if (delivery !== existing) await this.writeJson(target, delivery);
+    return { delivery, path: target };
+  }
+
+  async loadDeliveryForRelease(
+    release: PrivateRelease,
+  ): Promise<Delivery | undefined> {
+    validateRelease(release);
+    const deliveries = (
+      await this.readDirectory<Delivery>(this.privatePath("deliveries"))
+    ).map((delivery) => {
+      validateDelivery(delivery);
+      return delivery;
+    });
+    const matches = deliveries.filter(
+      (delivery) => delivery.releaseId === release.id,
+    );
+    invariant(
+      matches.length <= 1,
+      "delivery_conflict",
+      `Multiple deliveries exist for release: ${release.id}`,
+    );
+    const delivery = matches[0];
+    if (delivery) validateDeliveryReleaseLink(delivery, release);
+    return delivery;
+  }
+
+  async writeReview(name: string, markdown: string): Promise<string> {
+    const target = this.privatePath("reviews", `${safeId(name)}.md`);
     await this.writeText(target, markdown);
     return target;
   }

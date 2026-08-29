@@ -26,6 +26,7 @@ import {
   PublicDeclassifier,
   toPublicFrontmatter,
 } from "./publication.js";
+import { createPendingDelivery, sealPublicProjection } from "./release.js";
 import { renderCandidateReview, renderDraftReview } from "./review.js";
 import { GitFileStateStore, type StoredPaper } from "./store.js";
 import { sha256, stableJson } from "./util.js";
@@ -68,7 +69,10 @@ export type RunReport =
       draftId: string;
       paperId: string;
       slug: string;
-      publicPath: string;
+      privatePublicationPath: string;
+      releasePath: string;
+      deliveryPath: string;
+      publicDigest: string;
       changedPaths: string[];
     };
 
@@ -821,18 +825,42 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
     const slug = publicationSlug(stored.paper.title, stored.paper.id);
     const existing = await this.#store.loadPublication(slug);
     if (existing) {
-      const projection = new PublicDeclassifier().declassify(existing, draft);
-      const target = await this.#store.writePublicPaper(
+      const release = await this.#store.loadReleaseForPublication(
         existing.slug,
-        new TextDecoder().decode(projection.bytes),
+      );
+      invariant(
+        release,
+        "sealed_release_missing",
+        `Publication has no sealed release: ${existing.slug}`,
+      );
+      const existingDelivery =
+        await this.#store.loadDeliveryForRelease(release);
+      const delivery =
+        existingDelivery ??
+        createPendingDelivery(release, this.#clock().toISOString());
+      const deliveryPath = existingDelivery
+        ? this.#store.privatePath("deliveries", `${delivery.id}.json`)
+        : await this.#store.saveDelivery(delivery);
+      const publicationPath = this.#store.privatePath(
+        "publications",
+        `${existing.slug}.json`,
+      );
+      const releasePath = this.#store.privatePath(
+        "releases",
+        `${release.id}.json`,
       );
       return {
         command: "publish",
         draftId: draft.id,
         paperId: stored.paper.id,
         slug,
-        publicPath: this.#store.relative(target),
-        changedPaths: [],
+        privatePublicationPath: this.#store.relative(publicationPath),
+        releasePath: this.#store.relative(releasePath),
+        deliveryPath: this.#store.relative(deliveryPath),
+        publicDigest: release.projection.sha256,
+        changedPaths: existingDelivery
+          ? []
+          : [this.#store.relative(deliveryPath)],
       };
     }
     const publication = buildPublication(stored.paper, draft, approval, {
@@ -841,19 +869,29 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
     });
     const recordPath = await this.#store.savePublication(publication);
     const projection = new PublicDeclassifier().declassify(publication, draft);
-    const target = await this.#store.writePublicPaper(
-      publication.slug,
-      new TextDecoder().decode(projection.bytes),
+    const release = sealPublicProjection(projection, {
+      draftId: draft.id,
+      publicationPath: this.#store.relative(recordPath),
+      publicationSha256: sha256(stableJson(publication)),
+      createdAt: publication.publishedAt,
+    });
+    const releasePath = await this.#store.saveRelease(release);
+    const deliveryPath = await this.#store.saveDelivery(
+      createPendingDelivery(release, publication.publishedAt),
     );
     return {
       command: "publish",
       draftId: draft.id,
       paperId: stored.paper.id,
       slug: publication.slug,
-      publicPath: this.#store.relative(target),
+      privatePublicationPath: this.#store.relative(recordPath),
+      releasePath: this.#store.relative(releasePath),
+      deliveryPath: this.#store.relative(deliveryPath),
+      publicDigest: projection.sha256,
       changedPaths: [
         this.#store.relative(recordPath),
-        this.#store.relative(target),
+        this.#store.relative(releasePath),
+        this.#store.relative(deliveryPath),
       ].sort(),
     };
   }

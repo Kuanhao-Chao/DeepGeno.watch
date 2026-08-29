@@ -18,6 +18,15 @@ export {
   toPublicFrontmatter,
   type PublicProjection,
 } from "./publication.js";
+export {
+  createPendingDelivery,
+  projectionFromRelease,
+  sealPublicProjection,
+  transitionDelivery,
+  type Delivery,
+  type DeliveryState,
+  type PrivateRelease,
+} from "./release.js";
 export { AllowlistedHttpClient, DEFAULT_SOURCE_HOSTS } from "./http.js";
 export { BioRxivSource } from "./sources/biorxiv.js";
 export { ArxivOaiSource } from "./sources/arxiv.js";

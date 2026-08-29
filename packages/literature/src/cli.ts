@@ -13,7 +13,6 @@ import type {
   MetadataEnricher,
   StructuredModel,
 } from "./ports.js";
-import { renderPublicMarkdown } from "./publication.js";
 import { parseCandidateReview, parseDraftReview } from "./review.js";
 import { ArxivOaiSource } from "./sources/arxiv.js";
 import { BioRxivSource } from "./sources/biorxiv.js";
@@ -26,9 +25,11 @@ import { LiteratureError, invariant } from "./errors.js";
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseArguments(argv);
-  const root = path.resolve(parsed.flags.root ?? process.cwd());
-  const config = await loadPipelineConfig(root);
-  const store = new GitFileStateStore(root);
+  const { projectRoot, stateRoot } = resolveCliRoots(parsed.command, {
+    flags: parsed.flags,
+  });
+  const config = await loadPipelineConfig(projectRoot);
+  const store = new GitFileStateStore(stateRoot);
   const http = new AllowlistedHttpClient({
     minimumIntervalMsByHost: {
       ...(config.arxiv.enabled
@@ -207,19 +208,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         "projection_error",
         "Unexpected projection type",
       );
-      const changedPaths: string[] = [];
-      for (const publication of await store.listPublications()) {
-        const draft = await store.loadDraft(publication.review.draftId);
-        const target = await store.writePublicPaper(
-          publication.slug,
-          renderPublicMarkdown(publication, draft),
-        );
-        changedPaths.push(store.relative(target));
-      }
       report = {
         command: "project",
         publishedCount: catalog.papers.length,
-        changedPaths: changedPaths.sort(),
+        changedPaths: [],
       };
       break;
     }
@@ -237,6 +229,51 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 interface ParsedArguments {
   command: string;
   flags: Record<string, string | undefined>;
+}
+
+const PRIVATE_STATE_COMMANDS = new Set([
+  "discover",
+  "apply-triage",
+  "synthesize",
+  "apply-draft",
+  "publish",
+  "project",
+]);
+
+export function resolveCliRoots(
+  command: string,
+  options: {
+    flags: Record<string, string | undefined>;
+    environment?: NodeJS.ProcessEnv;
+    cwd?: string;
+  },
+): { projectRoot: string; stateRoot: string } {
+  const environment = options.environment ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  if (
+    environment.GITHUB_ACTIONS === "true" &&
+    PRIVATE_STATE_COMMANDS.has(command)
+  ) {
+    invariant(
+      options.flags["state-root"] || environment.DEEPGENO_STATE_ROOT,
+      "state_root_required",
+      "Private-state commands in GitHub Actions require --state-root or DEEPGENO_STATE_ROOT",
+    );
+  }
+  const projectRoot =
+    options.flags["project-root"] ??
+    environment.DEEPGENO_PROJECT_ROOT ??
+    options.flags.root ??
+    cwd;
+  const stateRoot =
+    options.flags["state-root"] ??
+    environment.DEEPGENO_STATE_ROOT ??
+    options.flags.root ??
+    cwd;
+  return {
+    projectRoot: path.resolve(cwd, projectRoot),
+    stateRoot: path.resolve(cwd, stateRoot),
+  };
 }
 
 function parseArguments(argv: string[]): ParsedArguments {

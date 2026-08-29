@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TechnicalSummary } from "@deepgeno/contracts";
 import { createLiteratureLifecycle } from "./lifecycle.js";
 import { FakeStructuredModel } from "./models/fake.js";
+import { projectionFromRelease } from "./release.js";
 import type {
   LiteratureSource,
   MetadataEnricher,
@@ -229,13 +230,52 @@ describe("LiteratureLifecycle", () => {
       draftId: revisedDraft.id,
     });
     if (publication.command !== "publish") throw new Error("Unexpected report");
-    expect(publication.publicPath).toMatch(/^content\/public\/papers\/.+\.md$/);
-    const publicMarkdown = await readFile(
-      path.join(root, publication.publicPath),
-      "utf8",
+    expect(publication).toMatchObject({
+      privatePublicationPath: expect.stringMatching(
+        /^data\/private\/publications\/.+\.json$/,
+      ),
+      releasePath: expect.stringMatching(/^data\/private\/releases\/.+\.json$/),
+      deliveryPath: expect.stringMatching(
+        /^data\/private\/deliveries\/.+\.json$/,
+      ),
+      publicDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(publication.changedPaths).toEqual(
+      [
+        publication.privatePublicationPath,
+        publication.releasePath,
+        publication.deliveryPath,
+      ].sort(),
     );
-    expect(publicMarkdown).toContain("priority: must-read");
-    expect(publicMarkdown).not.toContain(primary.abstract);
+    const release = await store.loadReleaseForPublication(publication.slug);
+    if (!release) throw new Error("Expected sealed release");
+    const sealedMarkdown = new TextDecoder().decode(
+      projectionFromRelease(release).bytes,
+    );
+    expect(sealedMarkdown).toContain("priority: must-read");
+    expect(sealedMarkdown).not.toContain(primary.abstract);
+    await expect(
+      store.saveRelease({
+        ...release,
+        createdAt: "2026-08-28T07:01:00.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "immutable_conflict" });
+    await expect(
+      readdir(path.join(root, "content", "public", "papers")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const publishedReplay = await lifecycle.run({
+      kind: "publish",
+      draftId: revisedDraft.id,
+    });
+    expect(publishedReplay).toMatchObject({
+      command: "publish",
+      privatePublicationPath: publication.privatePublicationPath,
+      releasePath: publication.releasePath,
+      deliveryPath: publication.deliveryPath,
+      publicDigest: publication.publicDigest,
+      changedPaths: [],
+    });
 
     const catalog = await lifecycle.project({ kind: "public-catalog" });
     if (catalog.kind !== "public-catalog")

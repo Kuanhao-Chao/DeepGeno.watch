@@ -72,7 +72,9 @@ async function triageCheck() {
   const decidedAt = metadata.updatedAt || new Date().toISOString();
   if (kind === "candidate") {
     const result = literature("apply-triage", [
-      "--root",
+      "--project-root",
+      ".",
+      "--state-root",
       ".",
       "--batch",
       id,
@@ -91,7 +93,9 @@ async function triageCheck() {
     );
   } else {
     literature("apply-draft", [
-      "--root",
+      "--project-root",
+      ".",
+      "--state-root",
       ".",
       "--draft",
       id,
@@ -130,7 +134,9 @@ async function ingest() {
   for (const window of windows) {
     if (!shadow) switchToMain();
     const result = literature("discover", [
-      "--root",
+      "--project-root",
+      ".",
+      "--state-root",
       ".",
       "--from",
       window.from,
@@ -185,7 +191,9 @@ async function recordTriage() {
     `candidate-${branchToken(batchId)}.md`,
   );
   const result = literature("apply-triage", [
-    "--root",
+    "--project-root",
+    ".",
+    "--state-root",
     ".",
     "--batch",
     batchId,
@@ -234,7 +242,9 @@ async function synthesize() {
   configureGit();
   switchToMain();
   const result = literature("synthesize", [
-    "--root",
+    "--project-root",
+    ".",
+    "--state-root",
     ".",
     "--paper",
     paperId,
@@ -270,7 +280,9 @@ async function recordSummary() {
     `summary-${branchToken(draftId)}.md`,
   );
   const decisionArgs = [
-    "--root",
+    "--project-root",
+    ".",
+    "--state-root",
     ".",
     "--draft",
     draftId,
@@ -331,7 +343,9 @@ async function publishApproved() {
   configureGit();
   switchToMain();
   const publication = literature("publish", [
-    "--root",
+    "--project-root",
+    ".",
+    "--state-root",
     ".",
     "--draft",
     draftId,
@@ -340,7 +354,12 @@ async function publishApproved() {
     PRIVATE_PREFIX,
     PUBLIC_PAPER_PREFIX,
   ]);
-  const projection = literature("project", ["--root", "."]);
+  const projection = literature("project", [
+    "--project-root",
+    ".",
+    "--state-root",
+    ".",
+  ]);
   changedPaths = [
     ...changedPaths,
     ...validateChangedPaths(projection.changedPaths, [PUBLIC_PAPER_PREFIX]),
@@ -351,7 +370,9 @@ async function publishApproved() {
     [...new Set(changedPaths)],
     `feat(literature): publish approved summary ${draftId}`,
   );
-  console.log(`Published ${draftId} to ${publication.publicPath}.`);
+  console.log(
+    `Sealed publication ${draftId} for delivery with digest ${publication.publicDigest}.`,
+  );
 }
 
 async function mergedReviewEvent(expectedKind) {
