@@ -34,11 +34,15 @@ not add a Worker `main` entrypoint.
    `packages/contracts/*`, `scripts/reset-web-content-cache.mjs`,
    `scripts/static-artifact-check.mjs`, `package.json`, `package-lock.json`, `.nvmrc`,
    `tsconfig.base.json`, and `wrangler.jsonc`. Exclude `data/private/*`.
-9. Under **Settings → Domains & Routes**, keep the production `workers.dev` route
-   public. Enable Cloudflare Access for **Preview URLs** and restrict it to the intended
-   reviewers.
+9. Open the Worker **Access** tab, select **Protect this Worker behind Access**, choose
+   **Previews only**, select or create the intended reviewer authentication policy, and
+   select **Apply Access**. This keeps the production `workers.dev` route public.
 10. Save the settings before retrying a build; retries use the settings that are active
     at retry time.
+
+Run `./scripts/activate-production.sh` for a resumable browser-guided walkthrough of
+the remaining build-watch and preview-Access steps. The wizard also continues into the
+separate provider-secret and controlled Gate 1 activation stages.
 
 Private-only Gate 1 and Gate 2 review branches should be skipped by build watch paths.
 Changes to the web app, public projection, build scripts, dependencies, or deployment

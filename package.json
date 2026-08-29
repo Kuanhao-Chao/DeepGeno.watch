@@ -20,7 +20,7 @@
     "test:watch": "vitest",
     "artifact:check": "node scripts/static-artifact-check.mjs",
     "privacy": "node scripts/privacy-check.mjs",
-    "deploy:dry-run": "wrangler deploy --dry-run",
+    "deploy:dry-run": "WRANGLER_LOG_PATH=.wrangler/logs wrangler deploy --dry-run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "literature": "tsx packages/literature/src/cli.ts"

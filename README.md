@@ -113,12 +113,23 @@ Preview URLs with Cloudflare Access. The checked-in `wrangler.jsonc` is the depl
 contract for the asset-only Worker. Full setup, smoke tests, and failure recovery are in
 [docs/cloudflare-workers.md](./docs/cloudflare-workers.md).
 
+The remaining dashboard, provider-secret, and first live Gate 1 steps are available as
+a resumable browser-guided wizard:
+
+```bash
+./scripts/activate-production.sh
+```
+
+The wizard never reads an API key into the terminal and leaves the final workflow
+dispatch under curator control.
+
 ## Operating budget
 
 The default policy expects 10–30 daily candidates but makes zero synthesis calls before
 Gate 1. One canonical summary powers every public depth. The $15/month value in the
 reference model config is a planning target, not a billing guarantee; configure a
-provider-side spend alert as the hard monthly control. The workflow also caps selected
-summaries per run.
-The default limits are 20 new summaries per Gate 1 merge and 5,000 output tokens per
-model call; both are explicit GitHub variables.
+provider-side enforced spend limit plus alerts as the monthly control. The workflow
+also caps selected summaries per run.
+The production-policy limits are 20 new summaries per Gate 1 merge and 5,000 output
+tokens per model call; both are explicit GitHub variables. During initial activation,
+the repository summary ceiling is deliberately pinned to 1.

@@ -25,6 +25,11 @@
    review PRs. Closing a PR without merge remains the simplest way to abandon it
    without recording a new state transition.
 
+For the remaining Cloudflare dashboard settings, provider secret, and first controlled
+live dispatch, run `./scripts/activate-production.sh`. It opens the relevant account
+pages and pauses after each human-only step; it does not collect credentials or click
+the final workflow action.
+
 ## Workflow map
 
 - `Literature ingestion` runs at 06:17 in `America/Los_Angeles` and supports manual,
@@ -47,11 +52,12 @@
    replace an older pending run.
 2. Deploy the static Astro site through the Git-connected `deepgeno-watch` Worker using
    the settings in `docs/cloudflare-workers.md`; protect preview URLs with Access.
-3. Temporarily set `DEEPGENO_MAX_SUMMARIES_PER_RUN=1`. Run one manually selected paper
-   with `gpt-5.6-terra` and a comparable paper with `claude-sonnet-5`, exposing only the
-   active provider key. Do not use silent failover; compare evidence fidelity,
-   completeness, clarity, latency, and token usage, then record the chosen provider and
-   remove the unused key.
+3. Temporarily set `DEEPGENO_MAX_SUMMARIES_PER_RUN=1`. Keep scheduled live ingestion
+   disabled and run one explicit non-shadow manual discovery. Select one paper at Gate
+   1 and carry it through Gate 2 with `gpt-5.6-terra`. Then use a comparable paper with
+   `claude-sonnet-5`, exposing only the active provider key. Do not use silent failover;
+   compare evidence fidelity, completeness, clarity, latency, and token usage, then
+   record the chosen provider and remove the unused key.
 4. Keep `DEEPGENO_LIVE_INGESTION_ENABLED=false` until one approved Gate 2 draft reaches
    the public Worker with a green privacy check. Then enable it, raise the summary cap
    to 5, and observe three daily cycles before restoring the ceiling of 20.
