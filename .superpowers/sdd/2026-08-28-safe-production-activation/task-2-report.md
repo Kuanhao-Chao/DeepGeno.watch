@@ -172,3 +172,10 @@ test with distinct roots; the decision is written under only the state root.
 RED: the first empty-batch attempt was rejected by the real decision schema;
 the final test seeds one deterministic candidate and selects it through the
 rendered review form.
+
+## Fix round 5
+
+The later-draft rejection now snapshots and reloads the persisted publication,
+release, delivery, paths, delivery state, and raw sealed bytes. It proves the
+rejected request leaves one byte-identical artifact of each kind rather than
+relying on the pre-conflict in-memory objects.

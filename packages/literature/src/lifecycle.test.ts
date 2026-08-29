@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -321,6 +321,18 @@ describe("LiteratureLifecycle", () => {
       changedPaths: [],
     });
 
+    const deliveryBefore = await store.loadDeliveryForRelease(release);
+    if (!deliveryBefore) throw new Error("Expected delivery");
+    const publicationBefore = await readFile(
+      store.publicationPath(publication.slug),
+      "utf8",
+    );
+    const releaseBefore = await readFile(store.releasePath(release), "utf8");
+    const deliveryBeforeFile = await readFile(
+      store.deliveryPath(deliveryBefore),
+      "utf8",
+    );
+    const sealedBytesBefore = projectionFromRelease(release).bytes;
     const { recordSha256: _oldRecord, ...laterCore } = revisedDraft;
     const laterDraftCore = {
       ...laterCore,
@@ -351,9 +363,33 @@ describe("LiteratureLifecycle", () => {
       lifecycle.run({ kind: "publish", draftId: laterDraft.id }),
     ).rejects.toMatchObject({ code: "publication_draft_mismatch" });
     expect(await store.listPublications()).toHaveLength(1);
-    expect(new TextDecoder().decode(projectionFromRelease(release).bytes)).toBe(
-      sealedMarkdown,
+    const publicationAfter = await store.loadPublication(publication.slug);
+    if (!publicationAfter) throw new Error("Expected publication");
+    const releaseAfter = await store.loadReleaseForPublication(
+      publication.slug,
+      publicationAfter,
     );
+    if (!releaseAfter) throw new Error("Expected release");
+    const deliveryAfter = await store.loadDeliveryForRelease(releaseAfter);
+    expect(deliveryAfter).toEqual(deliveryBefore);
+    expect(
+      await readFile(store.publicationPath(publication.slug), "utf8"),
+    ).toBe(publicationBefore);
+    expect(await readFile(store.releasePath(releaseAfter), "utf8")).toBe(
+      releaseBefore,
+    );
+    expect(await readFile(store.deliveryPath(deliveryBefore), "utf8")).toBe(
+      deliveryBeforeFile,
+    );
+    expect(projectionFromRelease(releaseAfter).bytes).toEqual(
+      sealedBytesBefore,
+    );
+    expect(
+      await readdir(path.join(root, "data", "private", "releases")),
+    ).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "deliveries")),
+    ).toHaveLength(1);
 
     const catalog = await lifecycle.project({ kind: "public-catalog" });
     if (catalog.kind !== "public-catalog")
