@@ -263,4 +263,20 @@ describe("delivery outbox states", () => {
       reason: { code: "delivery_state_conflict" },
     });
   });
+
+  it("rejects raw writes outside private state even through a test-only cast", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
+    roots.push(root);
+    const store = new GitFileStateStore(root) as unknown as {
+      writeText(target: string, content: string): Promise<void>;
+    };
+    const target = path.join(root, "content", "public", "papers", "bad.md");
+
+    await expect(store.writeText(target, "bad")).rejects.toMatchObject({
+      code: "path_outside_root",
+    });
+    await expect(readFile(target, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });

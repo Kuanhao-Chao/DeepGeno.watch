@@ -144,3 +144,20 @@ publication/release integrity gaps.
 
 `npm test -- --run packages/literature/src/cli.test.ts packages/literature/src/release.test.ts packages/literature/src/lifecycle.test.ts`
 passed with 21 tests, followed by full repository verification before commit.
+
+## Fix round 3: recovery and boundary proof
+
+Added deterministic one-shot persistence faults to the approved lifecycle test:
+publication-only recovery fills the release, release-only recovery fills only
+the delivery, and the resulting completed replay is a no-op with one private
+artifact of each kind. The same test now validates a schema-valid tampered
+publication against the persisted release. Added a test-only runtime cast that
+confirms the private raw writer rejects `content/public` targets.
+
+Focused GREEN command:
+
+```text
+npm test -- --run packages/literature/src/lifecycle.test.ts packages/literature/src/release.test.ts
+```
+
+Result: 2 files passed, 15 tests passed.

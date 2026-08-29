@@ -1,11 +1,15 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { TechnicalSummary } from "@deepgeno/contracts";
+import type { PublishedPaper, TechnicalSummary } from "@deepgeno/contracts";
 import { createLiteratureLifecycle } from "./lifecycle.js";
 import { FakeStructuredModel } from "./models/fake.js";
-import { projectionFromRelease } from "./release.js";
+import {
+  projectionFromRelease,
+  type Delivery,
+  type PrivateRelease,
+} from "./release.js";
 import type {
   LiteratureSource,
   MetadataEnricher,
@@ -28,7 +32,7 @@ describe("LiteratureLifecycle", () => {
   it("enforces both human gates and publishes one deduplicated evidence-backed paper", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-lifecycle-"));
     roots.push(root);
-    const store = new GitFileStateStore(root);
+    const store = new FaultInjectingStore(root);
     const primary = sourceRecord({
       source: "biorxiv",
       sourceId: "10.1101/2026.08.28.123456",
@@ -225,6 +229,14 @@ describe("LiteratureLifecycle", () => {
       commitSha: "a".repeat(40),
     });
 
+    store.failReleaseOnce = true;
+    store.failDeliveryOnce = true;
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: revisedDraft.id }),
+    ).rejects.toMatchObject({ code: "fault_release" });
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: revisedDraft.id }),
+    ).rejects.toMatchObject({ code: "fault_delivery" });
     const publication = await lifecycle.run({
       kind: "publish",
       draftId: revisedDraft.id,
@@ -240,13 +252,14 @@ describe("LiteratureLifecycle", () => {
       ),
       publicDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(publication.changedPaths).toEqual(
-      [
-        publication.privatePublicationPath,
-        publication.releasePath,
-        publication.deliveryPath,
-      ].sort(),
-    );
+    expect(publication.changedPaths).toEqual([publication.deliveryPath]);
+    expect(await store.listPublications()).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "releases")),
+    ).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "deliveries")),
+    ).toHaveLength(1);
     const storedPublication = await store.loadPublication(publication.slug);
     if (!storedPublication) throw new Error("Expected publication");
     const release = await store.loadReleaseForPublication(
@@ -268,6 +281,23 @@ describe("LiteratureLifecycle", () => {
         storedPublication,
       ),
     ).rejects.toMatchObject({ code: "immutable_conflict" });
+    const tamperedPublication = {
+      ...storedPublication,
+      updatedAt: "2026-08-29T07:00:00.000Z",
+    };
+    await writeFile(
+      store.publicationPath(publication.slug),
+      JSON.stringify(tamperedPublication),
+      "utf8",
+    );
+    await expect(
+      store.loadReleaseForPublication(publication.slug, tamperedPublication),
+    ).rejects.toMatchObject({ code: "release_publication_mismatch" });
+    await writeFile(
+      store.publicationPath(publication.slug),
+      JSON.stringify(storedPublication),
+      "utf8",
+    );
     await expect(
       readdir(path.join(root, "content", "public", "papers")),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -539,3 +569,31 @@ const failingEnricher: MetadataEnricher = {
     throw new Error("fixture enrichment unavailable");
   },
 };
+
+class FaultInjectingStore extends GitFileStateStore {
+  failReleaseOnce = false;
+  failDeliveryOnce = false;
+
+  override async saveRelease(
+    release: PrivateRelease,
+    publication: PublishedPaper,
+  ): Promise<string> {
+    if (this.failReleaseOnce) {
+      this.failReleaseOnce = false;
+      throw Object.assign(new Error("release fault"), {
+        code: "fault_release",
+      });
+    }
+    return super.saveRelease(release, publication);
+  }
+
+  override async saveDelivery(delivery: Delivery): Promise<string> {
+    if (this.failDeliveryOnce) {
+      this.failDeliveryOnce = false;
+      throw Object.assign(new Error("delivery fault"), {
+        code: "fault_delivery",
+      });
+    }
+    return super.saveDelivery(delivery);
+  }
+}
