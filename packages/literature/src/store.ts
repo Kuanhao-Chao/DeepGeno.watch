@@ -266,6 +266,12 @@ export class GitFileStateStore {
 
   async savePublication(publication: PublishedPaper): Promise<string> {
     PublishedPaperSchema.parse(publication);
+    const prior = await this.findPublicationByPaperId(publication.paper.id);
+    invariant(
+      !prior || prior.slug === publication.slug,
+      "publication_identity_conflict",
+      `Paper already has an immutable publication: ${publication.paper.id}`,
+    );
     const target = this.privatePath(
       "publications",
       `${safeId(publication.slug)}.json`,
@@ -298,6 +304,20 @@ export class GitFileStateStore {
       this.privatePath("publications"),
     );
     return values.map((value) => PublishedPaperSchema.parse(value));
+  }
+
+  async findPublicationByPaperId(
+    paperId: string,
+  ): Promise<PublishedPaper | undefined> {
+    const matches = (await this.listPublications()).filter(
+      (publication) => publication.paper.id === paperId,
+    );
+    invariant(
+      matches.length <= 1,
+      "publication_identity_conflict",
+      `Multiple immutable publications exist for paper: ${paperId}`,
+    );
+    return matches[0];
   }
 
   async saveRelease(

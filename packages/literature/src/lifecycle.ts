@@ -822,14 +822,44 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
       "publication_not_approved",
       `Draft has not passed publication review: ${draft.id}`,
     );
-    const slug = publicationSlug(stored.paper.title, stored.paper.id);
-    let publication = await this.#store.loadPublication(slug);
+    let publication = await this.#store.findPublicationByPaperId(
+      stored.paper.id,
+    );
     if (publication) {
       invariant(
         publication.review.draftId === draft.id,
         "publication_draft_mismatch",
         `Publication already belongs to a different approved draft: ${publication.slug}`,
       );
+      let release = await this.#store.loadReleaseForPublication(
+        publication.slug,
+        publication,
+      );
+      if (release) {
+        const existingDelivery =
+          await this.#store.loadDeliveryForRelease(release);
+        const delivery =
+          existingDelivery ??
+          createPendingDelivery(release, this.#clock().toISOString());
+        const deliveryPath = existingDelivery
+          ? this.#store.deliveryPath(delivery)
+          : await this.#store.saveDelivery(delivery);
+        return {
+          command: "publish",
+          draftId: draft.id,
+          paperId: stored.paper.id,
+          slug: publication.slug,
+          privatePublicationPath: this.#store.relative(
+            this.#store.publicationPath(publication.slug),
+          ),
+          releasePath: this.#store.relative(this.#store.releasePath(release)),
+          deliveryPath: this.#store.relative(deliveryPath),
+          publicDigest: release.projection.sha256,
+          changedPaths: existingDelivery
+            ? []
+            : [this.#store.relative(deliveryPath)],
+        };
+      }
       const expectedPublication = buildPublication(
         stored.paper,
         draft,
@@ -844,12 +874,8 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
         "publication_integrity_mismatch",
         `Immutable publication does not match approved draft: ${publication.slug}`,
       );
-      let release = await this.#store.loadReleaseForPublication(
-        publication.slug,
-        publication,
-      );
       let createdRelease = false;
-      if (!release) {
+      {
         const projection = new PublicDeclassifier().declassify(
           publication,
           draft,
@@ -877,7 +903,7 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
         command: "publish",
         draftId: draft.id,
         paperId: stored.paper.id,
-        slug,
+        slug: publication.slug,
         privatePublicationPath: this.#store.relative(
           this.#store.publicationPath(publication.slug),
         ),

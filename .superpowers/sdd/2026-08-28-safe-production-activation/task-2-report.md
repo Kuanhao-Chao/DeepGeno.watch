@@ -5,8 +5,8 @@
 - Split CLI roots into `--project-root` and `--state-root`. Each takes
   precedence over its environment variable, then legacy local `--root`, then
   the working directory. In GitHub Actions, every private-state command
-  requires an explicit state root from `--state-root` or
-  `DEEPGENO_STATE_ROOT`.
+  requires the literal `--state-root` flag; `DEEPGENO_STATE_ROOT` is only a
+  local fallback.
 - Kept configuration reads at the project root and moved all lifecycle state to
   `GitFileStateStore`'s private `data/private` tree. The store no longer has a
   public-paper writer, and `project` no longer writes a checkout.
@@ -102,9 +102,9 @@ brief/ledger files; Task 2 source files were formatted directly.
 - `PrivateRelease` contains immutable `projection` bytes (base64), digest,
   public path, and private-publication linkage.
 - `Delivery` uses `pending | pr-open | merged | failed`.
-- `GitFileStateStore.transitionDelivery(release, state, updatedAt)` atomically
-  writes only a legal transition after validating the delivery's link to its
-  sealed release; same-state reconciliation is idempotent.
+- `GitFileStateStore.transitionDelivery(release, expectedState, nextState,
+updatedAt)` uses an expected-state CAS and an exclusive filesystem lock,
+  validating the delivery's link to its sealed release.
 - Task 3 must use `projectionFromRelease(release)`, never re-render a public
   projection, before attempting GitHub delivery.
 

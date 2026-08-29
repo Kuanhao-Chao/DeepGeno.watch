@@ -272,6 +272,11 @@ describe("LiteratureLifecycle", () => {
       readdir(path.join(root, "content", "public", "papers")),
     ).rejects.toMatchObject({ code: "ENOENT" });
 
+    const refreshed = await store.loadPaper(paperId);
+    refreshed.paper.title =
+      "A refreshed title must not change publication identity";
+    await store.savePaper(refreshed);
+
     const publishedReplay = await lifecycle.run({
       kind: "publish",
       draftId: revisedDraft.id,
