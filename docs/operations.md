@@ -45,12 +45,16 @@
    dated shadow window only after the previous run completes: GitHub keeps at most one
    running and one pending run for this concurrency group, so a newly queued run can
    replace an older pending run.
-2. Run one manually selected paper through OpenAI and one through Anthropic. Do not use
-   silent failover; compare the structured drafts and record the chosen production
-   provider/model explicitly.
-3. Connect Cloudflare Pages, configure build watch paths, and protect previews.
-4. Set `DEEPGENO_LIVE_INGESTION_ENABLED=true`, run one explicit manual live discovery,
-   and operate the daily loop until review volume is predictable.
+2. Deploy the static Astro site through the Git-connected `deepgeno-watch` Worker using
+   the settings in `docs/cloudflare-workers.md`; protect preview URLs with Access.
+3. Temporarily set `DEEPGENO_MAX_SUMMARIES_PER_RUN=1`. Run one manually selected paper
+   with `gpt-5.6-terra` and a comparable paper with `claude-sonnet-5`, exposing only the
+   active provider key. Do not use silent failover; compare evidence fidelity,
+   completeness, clarity, latency, and token usage, then record the chosen provider and
+   remove the unused key.
+4. Keep `DEEPGENO_LIVE_INGESTION_ENABLED=false` until one approved Gate 2 draft reaches
+   the public Worker with a green privacy check. Then enable it, raise the summary cap
+   to 5, and observe three daily cycles before restoring the ceiling of 20.
 5. Backfill the previous 90 days in no more than 30-day batches. Merge or close each
    candidate PR before proceeding when review load becomes uncomfortable.
 

@@ -14,7 +14,7 @@ Europe PMC / OpenAlex enrichment ──────┼─ LiteratureLifecycle
 OpenAI / Anthropic / fake model ────────┤    ├─ private inbox projection
 Git files / temporary test store ───────┘    └─ approved public projection
                                                     │
-                                                    └─ Astro → Cloudflare Pages
+                                                    └─ Astro → Workers Static Assets
 ```
 
 The lifecycle interface is intentionally coarse. Callers may discover, apply a human

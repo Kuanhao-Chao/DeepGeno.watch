@@ -17,7 +17,8 @@ and renders strings through Astro's escaping rather than raw HTML or generated M
 - `pull_request_target` is intentionally absent.
 - Production builds discard Astro's generated content store first, so deleting a
   public projection cannot leave a stale paper route in a reused build cache.
-- Cloudflare Pages preview deployments are protected with Access.
+- Cloudflare Worker Preview URLs are protected with Access; production `workers.dev`
+  remains public.
 - The public build has no imports from `data/private`; `npm run privacy` scans artifacts
   for private paths, secret patterns, and exact long text from private records.
 - Content Security Policy, framing, MIME-sniffing, referrer, and permissions headers are

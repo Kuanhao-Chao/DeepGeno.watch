@@ -53,20 +53,24 @@ Last updated: 2026-08-28
 - The tuned commit `67a4b32` passed remote CI and repeated the 2026-08-27 shadow window
   in 1 minute 33 seconds with 14 Candidates, zero source warnings, no mutation, and no
   model call.
-- Wrangler 4 is pinned locally and Cloudflare OAuth is valid; no Pages project has been
-  created, preserving the required Git-integration choice. The first Git-integrated
-  create request stopped safely with Cloudflare error `8000011`; the Cloudflare Workers
-  and Pages GitHub App must be repaired or reauthorized before retrying.
+- Wrangler 4 is pinned locally and Cloudflare OAuth is valid. Cloudflare contains an
+  existing `deepgeno-watch` Worker but no Pages project. Its two 2026-08-28 deployments
+  are dashboard-template placeholders; no Git-built Astro artifact has reached
+  production yet.
+- The repository deployment contract has been migrated from the incompatible
+  Pages-only `pages_build_output_dir` field to an asset-only Worker with explicit
+  static directory, HTML routing, custom 404, `workers.dev`, and preview URLs. The
+  unified local/CI check now includes a static-artifact verification and Wrangler dry
+  run. The first Git build using that contract remains to be observed remotely.
 
 ## Activation remaining
 
 These still require an external account choice or a deliberately later rollout gate:
 
-1. Add the selected provider/model variables and exactly one provider API key after
-   comparing one OpenAI and one Anthropic draft.
-2. Repair the Cloudflare Workers and Pages GitHub App connection, then connect the
-   repository to Pages, configure build watch paths, protect previews, and attach the
-   production domain.
+1. Push the Workers Static Assets recovery, configure Workers Builds, confirm a Git
+   deployment at `https://deepgeno-watch.khchao.workers.dev`, and protect previews.
+2. Compare `gpt-5.6-terra` with `claude-sonnet-5`, then retain the selected
+   provider/model variables and exactly one provider API key.
 3. After the model and site are ready, set `DEEPGENO_LIVE_INGESTION_ENABLED=true` and
    run one explicit manual live Gate 1 discovery.
 4. Run the bounded 90-day backfill after daily review volume is acceptable.

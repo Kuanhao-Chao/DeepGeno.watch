@@ -13,7 +13,7 @@ official scholarly sources
   → evidence packet · structured LLM synthesis
   → one private summary pull request per paper (Gate 2)
   → approved Astro collection
-  → Cloudflare Pages
+  → Cloudflare Workers Static Assets
 ```
 
 The public site is fully static. Private abstracts, evidence packets, model inputs,
@@ -91,23 +91,27 @@ changes create a new immutable draft revision rather than mutating prior provena
 
 ## Deployment
 
-Connect the private GitHub repository to Cloudflare Pages with:
+Connect the private GitHub repository to the existing Cloudflare Worker
+`deepgeno-watch` through Workers Builds with:
 
 - Production branch: `main`
+- Root directory: repository root
 - Build command: `npm run build`
-- Build output: `apps/web/dist`
+- Production deploy command: `npx wrangler deploy`
+- Preview deploy command: `npx wrangler versions upload`
 - Node version: `22.18.0`
+- Build-time `PUBLIC_SITE_URL`: `https://deepgeno-watch.khchao.workers.dev`
 - Build watch includes: `apps/web/*`, `content/public/*`, `packages/contracts/*`,
-  `scripts/reset-web-content-cache.mjs`, `package.json`, `package-lock.json`, `.nvmrc`,
-  `tsconfig.base.json`, `wrangler.jsonc`
+  `scripts/reset-web-content-cache.mjs`, `scripts/static-artifact-check.mjs`,
+  `package.json`, `package-lock.json`, `.nvmrc`, `tsconfig.base.json`, and
+  `wrangler.jsonc`
 - Build watch excludes: `data/private/*`
 
-Literature review branches touch only excluded private paths, so Pages should skip
-their previews. Enable the Pages preview access policy for web/code branches as defense
-in depth. Create the Pages project through Git integration, not Wrangler Direct Upload;
-the checked-in `wrangler.jsonc` records the static deployment contract. Full setup and
-smoke tests are in
-[docs/cloudflare-pages.md](./docs/cloudflare-pages.md).
+Literature review branches touch only excluded private paths, so Workers Builds should
+skip them. Enable non-production branch builds for web/code previews and protect
+Preview URLs with Cloudflare Access. The checked-in `wrangler.jsonc` is the deployment
+contract for the asset-only Worker. Full setup, smoke tests, and failure recovery are in
+[docs/cloudflare-workers.md](./docs/cloudflare-workers.md).
 
 ## Operating budget
 

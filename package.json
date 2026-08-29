@@ -14,11 +14,13 @@
   "scripts": {
     "build": "node scripts/reset-web-content-cache.mjs && npm run build --workspace @deepgeno/web",
     "dev": "npm run dev --workspace @deepgeno/web",
-    "check": "npm run typecheck && npm test && npm run privacy",
+    "check": "npm run typecheck && npm test && npm run build && npm run artifact:check && npm run privacy && npm run deploy:dry-run",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
+    "artifact:check": "node scripts/static-artifact-check.mjs",
     "privacy": "node scripts/privacy-check.mjs",
+    "deploy:dry-run": "wrangler deploy --dry-run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "literature": "tsx packages/literature/src/cli.ts"
