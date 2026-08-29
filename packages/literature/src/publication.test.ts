@@ -3,7 +3,11 @@ import { TextDecoder } from "node:util";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import type { DraftSummary, PublishedPaper } from "@deepgeno/contracts";
+import {
+  PublicPaperSchema,
+  type DraftSummary,
+  type PublishedPaper,
+} from "@deepgeno/contracts";
 import { PublicDeclassifier } from "./publication.js";
 
 const timestamp = "2026-08-28T07:00:00.000Z";
@@ -48,6 +52,19 @@ describe("PublicDeclassifier", () => {
         review: { approvedAt: timestamp },
       },
     });
+    expect(PublicPaperSchema.safeParse(frontmatter).success).toBe(true);
+    expect(
+      [
+        frontmatter.coreProblem,
+        ...frontmatter.novelty,
+        frontmatter.architecture,
+        ...frontmatter.datasets,
+        ...frontmatter.benchmarks,
+        ...frontmatter.results,
+        ...frontmatter.takeaways,
+        ...frontmatter.limitations,
+      ].flatMap((entry) => entry.evidenceIds),
+    ).toEqual(["e1", "e2", "e1", "e1", "e2", "e1", "e2", "e1"]);
     for (const privateMarker of [
       "paperId:",
       "draft-1",
@@ -152,10 +169,39 @@ function draftSummary(): DraftSummary {
         trainingObjectives: [],
         evidenceIds: ["private-evidence-a"],
       },
-      data: { datasets: [], benchmarks: [] },
-      quantitativeResults: [],
+      data: {
+        datasets: [
+          {
+            name: "Genome corpus",
+            role: "pretraining",
+            scale: null,
+            organisms: ["human"],
+            evidenceIds: ["private-evidence-a"],
+          },
+        ],
+        benchmarks: [
+          {
+            name: "Enhancer benchmark",
+            role: "benchmark",
+            scale: null,
+            organisms: ["human"],
+            evidenceIds: ["private-evidence-b"],
+          },
+        ],
+      },
+      quantitativeResults: [
+        {
+          claim: "Improves AUROC.",
+          metric: "AUROC",
+          value: "0.91",
+          baseline: null,
+          delta: null,
+          benchmark: "Enhancer benchmark",
+          evidenceIds: ["private-evidence-a"],
+        },
+      ],
       takeaways: [statement(["private-evidence-b"])],
-      limitations: [],
+      limitations: [statement(["private-evidence-a"])],
       topics: ["dna-language-model"],
       tags: ["foundation-model"],
       organisms: ["human"],

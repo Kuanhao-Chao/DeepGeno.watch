@@ -3,6 +3,8 @@ import { glob } from "astro/loaders";
 import { z } from "zod";
 
 const nonEmpty = z.string().trim().min(1);
+const publicEvidenceId = z.string().regex(/^e[1-9][0-9]*$/);
+const publicEvidenceIds = z.array(publicEvidenceId).min(1);
 const evidenceScope = z.enum([
   "abstract-only",
   "partial-full-text",
@@ -25,7 +27,7 @@ const topic = z.enum([
 const statement = z
   .object({
     statement: nonEmpty,
-    evidenceIds: z.array(nonEmpty).min(1),
+    evidenceIds: publicEvidenceIds,
   })
   .strict();
 
@@ -41,7 +43,7 @@ const locator = z
 
 const citation = z
   .object({
-    id: z.string().regex(/^e[1-9][0-9]*$/),
+    id: publicEvidenceId,
     documentKind: z.enum(["abstract", "jats", "html", "pdf", "supplement"]),
     sourceUrl: z.url(),
     locator,
@@ -60,7 +62,7 @@ const dataset = z
     ]),
     scale: nonEmpty.nullable(),
     organisms: z.array(nonEmpty),
-    evidenceIds: z.array(nonEmpty).min(1),
+    evidenceIds: publicEvidenceIds,
   })
   .strict();
 
@@ -72,7 +74,7 @@ const result = z
     baseline: nonEmpty.nullable(),
     delta: nonEmpty.nullable(),
     benchmark: nonEmpty.nullable(),
-    evidenceIds: z.array(nonEmpty).min(1),
+    evidenceIds: publicEvidenceIds,
   })
   .strict();
 
@@ -118,7 +120,7 @@ const paperSchema = z
         tokenization: nonEmpty.nullable(),
         contextLength: nonEmpty.nullable(),
         trainingObjectives: z.array(nonEmpty),
-        evidenceIds: z.array(nonEmpty).min(1),
+        evidenceIds: publicEvidenceIds,
       })
       .strict(),
     datasets: z.array(dataset),
@@ -150,7 +152,66 @@ const paperSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((paper, context) => {
+    const sourceIds = new Set<string>();
+    paper.evidence.sources.forEach((source, index) => {
+      if (sourceIds.has(source.id)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate public evidence source: ${source.id}`,
+          path: ["evidence", "sources", index, "id"],
+        });
+      }
+      sourceIds.add(source.id);
+    });
+
+    const references: Array<{ ids: string[]; path: (string | number)[] }> = [
+      {
+        ids: paper.coreProblem.evidenceIds,
+        path: ["coreProblem", "evidenceIds"],
+      },
+      ...paper.novelty.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["novelty", index, "evidenceIds"],
+      })),
+      {
+        ids: paper.architecture.evidenceIds,
+        path: ["architecture", "evidenceIds"],
+      },
+      ...paper.datasets.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["datasets", index, "evidenceIds"],
+      })),
+      ...paper.benchmarks.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["benchmarks", index, "evidenceIds"],
+      })),
+      ...paper.results.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["results", index, "evidenceIds"],
+      })),
+      ...paper.takeaways.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["takeaways", index, "evidenceIds"],
+      })),
+      ...paper.limitations.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["limitations", index, "evidenceIds"],
+      })),
+    ];
+    references.forEach(({ ids, path }) => {
+      ids.forEach((id, index) => {
+        if (!sourceIds.has(id)) {
+          context.addIssue({
+            code: "custom",
+            message: `Public summary cites unknown evidence: ${id}`,
+            path: [...path, index],
+          });
+        }
+      });
+    });
+  });
 
 const papers = defineCollection({
   loader: glob({
