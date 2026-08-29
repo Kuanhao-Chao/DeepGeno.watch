@@ -1,4 +1,13 @@
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   CandidateBatchSchema,
@@ -25,6 +34,7 @@ import {
   transitionDelivery as transitionDeliveryRecord,
   validateDelivery,
   validateDeliveryReleaseLink,
+  validateReleasePublicationLink,
   validateRelease,
   type Delivery,
   type DeliveryState,
@@ -290,8 +300,12 @@ export class GitFileStateStore {
     return values.map((value) => PublishedPaperSchema.parse(value));
   }
 
-  async saveRelease(release: PrivateRelease): Promise<string> {
+  async saveRelease(
+    release: PrivateRelease,
+    publication: PublishedPaper,
+  ): Promise<string> {
     projectionFromRelease(release);
+    validateReleasePublicationLink(release, publication);
     const target = this.privatePath("releases", `${safeId(release.id)}.json`);
     await this.writeImmutableJson(target, release);
     return target;
@@ -299,6 +313,7 @@ export class GitFileStateStore {
 
   async loadReleaseForPublication(
     slug: string,
+    publication: PublishedPaper,
   ): Promise<PrivateRelease | undefined> {
     const releases = (
       await this.readDirectory<PrivateRelease>(this.privatePath("releases"))
@@ -315,7 +330,10 @@ export class GitFileStateStore {
       `Multiple private releases exist for publication: ${slug}`,
     );
     const release = matches[0];
-    if (release) projectionFromRelease(release);
+    if (release) {
+      projectionFromRelease(release);
+      validateReleasePublicationLink(release, publication);
+    }
     return release;
   }
 
@@ -331,23 +349,31 @@ export class GitFileStateStore {
 
   async transitionDelivery(
     release: PrivateRelease,
+    expectedState: DeliveryState,
     state: DeliveryState,
     updatedAt: string,
   ): Promise<{ delivery: Delivery; path: string }> {
-    const existing = await this.loadDeliveryForRelease(release);
-    invariant(
-      existing,
-      "delivery_missing",
-      `Private delivery is missing for release: ${release.id}`,
-    );
-    const delivery = transitionDeliveryRecord(existing, state, updatedAt);
-    validateDeliveryReleaseLink(delivery, release);
-    const target = this.privatePath(
-      "deliveries",
-      `${safeId(delivery.id)}.json`,
-    );
-    if (delivery !== existing) await this.writeJson(target, delivery);
-    return { delivery, path: target };
+    return this.withDeliveryLock(release.id, async () => {
+      const existing = await this.loadDeliveryForRelease(release);
+      invariant(
+        existing,
+        "delivery_missing",
+        `Private delivery is missing for release: ${release.id}`,
+      );
+      invariant(
+        existing.state === expectedState,
+        "delivery_state_conflict",
+        `Delivery state changed from expected ${expectedState} to ${existing.state}`,
+      );
+      const delivery = transitionDeliveryRecord(existing, state, updatedAt);
+      validateDeliveryReleaseLink(delivery, release);
+      const target = this.privatePath(
+        "deliveries",
+        `${safeId(delivery.id)}.json`,
+      );
+      if (delivery !== existing) await this.writeJson(target, delivery);
+      return { delivery, path: target };
+    });
   }
 
   async loadDeliveryForRelease(
@@ -383,15 +409,30 @@ export class GitFileStateStore {
     return path.relative(this.root, target);
   }
 
-  privatePath(...segments: string[]): string {
+  publicationPath(slug: string): string {
+    return this.privatePath("publications", `${safeId(slug)}.json`);
+  }
+
+  releasePath(release: PrivateRelease): string {
+    return this.privatePath("releases", `${safeId(release.id)}.json`);
+  }
+
+  deliveryPath(delivery: Delivery): string {
+    return this.privatePath("deliveries", `${safeId(delivery.id)}.json`);
+  }
+
+  private privatePath(...segments: string[]): string {
     return path.join(this.root, "data", "private", ...segments);
   }
 
-  async writeJson(target: string, value: unknown): Promise<void> {
+  private async writeJson(target: string, value: unknown): Promise<void> {
     await this.writeText(target, stableJson(value));
   }
 
-  async writeImmutableJson(target: string, value: unknown): Promise<void> {
+  private async writeImmutableJson(
+    target: string,
+    value: unknown,
+  ): Promise<void> {
     const serialized = stableJson(value);
     try {
       const existing = await readFile(target, "utf8");
@@ -413,11 +454,11 @@ export class GitFileStateStore {
     await this.writeText(target, serialized);
   }
 
-  async readJson<T = unknown>(target: string): Promise<T> {
+  private async readJson<T = unknown>(target: string): Promise<T> {
     return JSON.parse(await readFile(target, "utf8")) as T;
   }
 
-  async readDirectory<T>(directory: string): Promise<T[]> {
+  private async readDirectory<T>(directory: string): Promise<T[]> {
     let entries: string[];
     try {
       entries = await readdir(directory);
@@ -437,16 +478,62 @@ export class GitFileStateStore {
     );
   }
 
-  async writeText(target: string, content: string): Promise<void> {
+  private async writeText(target: string, content: string): Promise<void> {
     invariant(
-      target.startsWith(`${this.root}${path.sep}`),
+      target.startsWith(`${this.privatePath()}${path.sep}`),
       "path_outside_root",
-      "Refusing to write outside repository root",
+      "Refusing to write outside private state",
     );
     await mkdir(path.dirname(target), { recursive: true });
-    const temporary = `${target}.${process.pid}.tmp`;
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
     await rename(temporary, target);
+  }
+
+  private async withDeliveryLock<T>(
+    releaseId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const lockPath = this.privatePath(
+      "deliveries",
+      `.${safeId(releaseId)}.lock`,
+    );
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      try {
+        handle = await open(lockPath, "wx", 0o600);
+        break;
+      } catch (error) {
+        if (!(
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "EEXIST"
+        ))
+          throw error;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    invariant(
+      handle,
+      "delivery_lock_timeout",
+      `Timed out waiting for delivery lock: ${releaseId}`,
+    );
+    try {
+      return await operation();
+    } finally {
+      await handle.close();
+      await unlink(lockPath).catch((error: unknown) => {
+        if (!(
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ))
+          throw error;
+      });
+    }
   }
 }
 

@@ -247,7 +247,12 @@ describe("LiteratureLifecycle", () => {
         publication.deliveryPath,
       ].sort(),
     );
-    const release = await store.loadReleaseForPublication(publication.slug);
+    const storedPublication = await store.loadPublication(publication.slug);
+    if (!storedPublication) throw new Error("Expected publication");
+    const release = await store.loadReleaseForPublication(
+      publication.slug,
+      storedPublication,
+    );
     if (!release) throw new Error("Expected sealed release");
     const sealedMarkdown = new TextDecoder().decode(
       projectionFromRelease(release).bytes,
@@ -255,10 +260,13 @@ describe("LiteratureLifecycle", () => {
     expect(sealedMarkdown).toContain("priority: must-read");
     expect(sealedMarkdown).not.toContain(primary.abstract);
     await expect(
-      store.saveRelease({
-        ...release,
-        createdAt: "2026-08-28T07:01:00.000Z",
-      }),
+      store.saveRelease(
+        {
+          ...release,
+          createdAt: "2026-08-28T07:01:00.000Z",
+        },
+        storedPublication,
+      ),
     ).rejects.toMatchObject({ code: "immutable_conflict" });
     await expect(
       readdir(path.join(root, "content", "public", "papers")),

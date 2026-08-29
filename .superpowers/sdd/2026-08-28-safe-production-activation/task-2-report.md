@@ -115,3 +115,32 @@ brief/ledger files; Task 2 source files were formatted directly.
 - Sealed release bytes are hashed as raw `Uint8Array` data, not decoded text.
 - Direct public delivery remains Task 3; Task 2 creates only private pending
   outbox state.
+
+## Fix round 1
+
+### RED
+
+`npm test -- --run packages/literature/src/cli.test.ts` failed because Actions
+accepted `DEEPGENO_STATE_ROOT` without the required `--state-root` flag.
+Additional focused release/lifecycle cases exposed stale delivery transitions,
+cross-process-safe transition serialization, partial release recovery, and
+publication/release integrity gaps.
+
+### Fix
+
+- Actions now requires the literal `--state-root` flag; environment fallback is
+  local-only.
+- Store implementation helpers are private and writes are constrained to
+  `data/private`; lifecycle uses canonical publication/release/delivery path
+  getters.
+- Release save/load validates raw sealed bytes and immutable publication
+  linkage. Recovery reconstructs and compares the approved publication before
+  it can seal a missing release.
+- Delivery transitions now use expected-state CAS plus an exclusive per-release
+  filesystem lock, reloading state under the lock. Temporary writes use a UUID.
+- Private publish automation accepts only private changed paths.
+
+### GREEN
+
+`npm test -- --run packages/literature/src/cli.test.ts packages/literature/src/release.test.ts packages/literature/src/lifecycle.test.ts`
+passed with 21 tests, followed by full repository verification before commit.

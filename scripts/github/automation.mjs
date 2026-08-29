@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 import {
   CANDIDATE_LABEL,
   PRIVATE_PREFIX,
-  PUBLIC_PAPER_PREFIX,
   SUMMARY_LABEL,
   assertPrivateRepository,
   branchToken,
@@ -352,18 +351,7 @@ async function publishApproved() {
   ]);
   let changedPaths = validateChangedPaths(publication.changedPaths, [
     PRIVATE_PREFIX,
-    PUBLIC_PAPER_PREFIX,
   ]);
-  const projection = literature("project", [
-    "--project-root",
-    ".",
-    "--state-root",
-    ".",
-  ]);
-  changedPaths = [
-    ...changedPaths,
-    ...validateChangedPaths(projection.changedPaths, [PUBLIC_PAPER_PREFIX]),
-  ];
   run("npm", ["run", "build"]);
   run("npm", ["run", "privacy"]);
   commitAndPush(

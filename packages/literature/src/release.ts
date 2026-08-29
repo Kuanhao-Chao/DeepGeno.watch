@@ -1,6 +1,8 @@
 import { sha256 } from "./util.js";
 import { invariant } from "./errors.js";
 import type { PublicProjection } from "./publication.js";
+import type { PublishedPaper } from "@deepgeno/contracts";
+import { stableJson } from "./util.js";
 
 export type SealedPublicProjection = Readonly<{
   path: string;
@@ -187,6 +189,22 @@ export function validateDeliveryReleaseLink(
       delivery.projectionSha256 === release.projection.sha256,
     "delivery_release_mismatch",
     "Private delivery does not match its sealed release",
+  );
+}
+
+export function validateReleasePublicationLink(
+  release: PrivateRelease,
+  publication: PublishedPaper,
+): void {
+  validateRelease(release);
+  invariant(
+    release.publicationSlug === publication.slug &&
+      release.publicationPath ===
+        `data/private/publications/${publication.slug}.json` &&
+      release.publicationSha256 === sha256(stableJson(publication)) &&
+      release.draftId === publication.review.draftId,
+    "release_publication_mismatch",
+    "Private release does not match its immutable publication",
   );
 }
 

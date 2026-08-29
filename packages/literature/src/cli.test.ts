@@ -73,14 +73,24 @@ describe("literature CLI roots", () => {
     ).toThrowError(expect.objectContaining({ code: "state_root_required" }));
   });
 
-  it("accepts an explicit state-root environment variable in GitHub Actions", () => {
-    expect(
+  it("rejects a state-root environment variable without an Actions flag", () => {
+    expect(() =>
       resolveCliRoots("publish", {
         flags: { "project-root": "project" },
         environment: {
           GITHUB_ACTIONS: "true",
           DEEPGENO_STATE_ROOT: "private-state",
         },
+        cwd: "/working-directory",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "state_root_required" }));
+  });
+
+  it("accepts an explicit state-root flag in GitHub Actions", () => {
+    expect(
+      resolveCliRoots("publish", {
+        flags: { "project-root": "project", "state-root": "private-state" },
+        environment: { GITHUB_ACTIONS: "true" },
         cwd: "/working-directory",
       }),
     ).toEqual({

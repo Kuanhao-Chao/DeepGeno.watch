@@ -187,11 +187,11 @@ describe("delivery outbox states", () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
     roots.push(root);
     const store = new GitFileStateStore(root);
-    await store.saveRelease(release);
     await store.saveDelivery(createPendingDelivery(release, createdAt));
 
     const advanced = await store.transitionDelivery(
       release,
+      "pending",
       "pr-open",
       "2026-08-28T07:01:00.000Z",
     );
@@ -201,7 +201,12 @@ describe("delivery outbox states", () => {
       "pr-open",
     );
     await expect(
-      store.transitionDelivery(release, "pending", "2026-08-28T07:02:00.000Z"),
+      store.transitionDelivery(
+        release,
+        "pr-open",
+        "pending",
+        "2026-08-28T07:02:00.000Z",
+      ),
     ).rejects.toMatchObject({ code: "delivery_transition_invalid" });
   });
 
@@ -209,7 +214,6 @@ describe("delivery outbox states", () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
     roots.push(root);
     const store = new GitFileStateStore(root);
-    await store.saveRelease(release);
     const deliveryPath = await store.saveDelivery(
       createPendingDelivery(release, createdAt),
     );
@@ -225,6 +229,38 @@ describe("delivery outbox states", () => {
 
     await expect(store.loadDeliveryForRelease(release)).rejects.toMatchObject({
       code: "delivery_release_mismatch",
+    });
+  });
+
+  it("serializes concurrent compare-and-swap delivery transitions", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
+    roots.push(root);
+    const first = new GitFileStateStore(root);
+    const second = new GitFileStateStore(root);
+    await first.saveDelivery(createPendingDelivery(release, createdAt));
+
+    const results = await Promise.allSettled([
+      first.transitionDelivery(
+        release,
+        "pending",
+        "pr-open",
+        "2026-08-28T07:01:00.000Z",
+      ),
+      second.transitionDelivery(
+        release,
+        "pending",
+        "failed",
+        "2026-08-28T07:01:00.000Z",
+      ),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected")[0],
+    ).toMatchObject({
+      reason: { code: "delivery_state_conflict" },
     });
   });
 });

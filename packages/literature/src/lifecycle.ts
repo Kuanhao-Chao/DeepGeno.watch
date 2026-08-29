@@ -823,47 +823,76 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
       `Draft has not passed publication review: ${draft.id}`,
     );
     const slug = publicationSlug(stored.paper.title, stored.paper.id);
-    const existing = await this.#store.loadPublication(slug);
-    if (existing) {
-      const release = await this.#store.loadReleaseForPublication(
-        existing.slug,
+    let publication = await this.#store.loadPublication(slug);
+    if (publication) {
+      invariant(
+        publication.review.draftId === draft.id,
+        "publication_draft_mismatch",
+        `Publication already belongs to a different approved draft: ${publication.slug}`,
+      );
+      const expectedPublication = buildPublication(
+        stored.paper,
+        draft,
+        approval,
+        {
+          publishedAt: publication.publishedAt,
+          ...(await this.#store.loadDraftReviewContext(draft.id)),
+        },
       );
       invariant(
-        release,
-        "sealed_release_missing",
-        `Publication has no sealed release: ${existing.slug}`,
+        stableJson(publication) === stableJson(expectedPublication),
+        "publication_integrity_mismatch",
+        `Immutable publication does not match approved draft: ${publication.slug}`,
       );
+      let release = await this.#store.loadReleaseForPublication(
+        publication.slug,
+        publication,
+      );
+      let createdRelease = false;
+      if (!release) {
+        const projection = new PublicDeclassifier().declassify(
+          publication,
+          draft,
+        );
+        release = sealPublicProjection(projection, {
+          draftId: draft.id,
+          publicationPath: this.#store.relative(
+            this.#store.publicationPath(publication.slug),
+          ),
+          publicationSha256: sha256(stableJson(publication)),
+          createdAt: publication.publishedAt,
+        });
+        await this.#store.saveRelease(release, publication);
+        createdRelease = true;
+      }
       const existingDelivery =
         await this.#store.loadDeliveryForRelease(release);
       const delivery =
         existingDelivery ??
         createPendingDelivery(release, this.#clock().toISOString());
       const deliveryPath = existingDelivery
-        ? this.#store.privatePath("deliveries", `${delivery.id}.json`)
+        ? this.#store.deliveryPath(delivery)
         : await this.#store.saveDelivery(delivery);
-      const publicationPath = this.#store.privatePath(
-        "publications",
-        `${existing.slug}.json`,
-      );
-      const releasePath = this.#store.privatePath(
-        "releases",
-        `${release.id}.json`,
-      );
       return {
         command: "publish",
         draftId: draft.id,
         paperId: stored.paper.id,
         slug,
-        privatePublicationPath: this.#store.relative(publicationPath),
-        releasePath: this.#store.relative(releasePath),
+        privatePublicationPath: this.#store.relative(
+          this.#store.publicationPath(publication.slug),
+        ),
+        releasePath: this.#store.relative(this.#store.releasePath(release)),
         deliveryPath: this.#store.relative(deliveryPath),
         publicDigest: release.projection.sha256,
-        changedPaths: existingDelivery
-          ? []
-          : [this.#store.relative(deliveryPath)],
+        changedPaths: [
+          ...(createdRelease
+            ? [this.#store.relative(this.#store.releasePath(release))]
+            : []),
+          ...(existingDelivery ? [] : [this.#store.relative(deliveryPath)]),
+        ].sort(),
       };
     }
-    const publication = buildPublication(stored.paper, draft, approval, {
+    publication = buildPublication(stored.paper, draft, approval, {
       publishedAt: this.#clock().toISOString(),
       ...(await this.#store.loadDraftReviewContext(draft.id)),
     });
@@ -875,7 +904,7 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
       publicationSha256: sha256(stableJson(publication)),
       createdAt: publication.publishedAt,
     });
-    const releasePath = await this.#store.saveRelease(release);
+    const releasePath = await this.#store.saveRelease(release, publication);
     const deliveryPath = await this.#store.saveDelivery(
       createPendingDelivery(release, publication.publishedAt),
     );

@@ -255,9 +255,9 @@ export function resolveCliRoots(
     PRIVATE_STATE_COMMANDS.has(command)
   ) {
     invariant(
-      options.flags["state-root"] || environment.DEEPGENO_STATE_ROOT,
+      options.flags["state-root"],
       "state_root_required",
-      "Private-state commands in GitHub Actions require --state-root or DEEPGENO_STATE_ROOT",
+      "Private-state commands in GitHub Actions require --state-root",
     );
   }
   const projectRoot =
