@@ -61,15 +61,24 @@ Last updated: 2026-08-28
   Pages-only `pages_build_output_dir` field to an asset-only Worker with explicit
   static directory, HTML routing, custom 404, `workers.dev`, and preview URLs. The
   unified local/CI check now includes a static-artifact verification and Wrangler dry
-  run. The first Git build using that contract remains to be observed remotely.
+  run.
+- Commit `f1a63f8` passed both `CI / verify` and `Workers Builds: deepgeno-watch`.
+  Cloudflare build `01252de0-d44b-4e26-9cd5-59c87ce9078f` deployed Worker version
+  `45a442fc-89eb-4e50-b7ba-b446f32d87e8` to
+  `https://deepgeno-watch.khchao.workers.dev`. All catalog/feed routes return 200, the
+  generated unknown-route page returns 404, canonical URLs are consistent, security
+  headers are active, and hashed Astro assets receive the immutable cache policy.
+- Preview URLs are enabled and automatically emit `X-Robots-Tag: noindex`. Preview
+  Access protection still needs to be enabled in the Cloudflare dashboard. The initial
+  synthesis ceiling is now 1; scheduled live ingestion remains disabled.
 
 ## Activation remaining
 
 These still require an external account choice or a deliberately later rollout gate:
 
-1. Push the Workers Static Assets recovery, configure Workers Builds, confirm a Git
-   deployment at `https://deepgeno-watch.khchao.workers.dev`, and protect previews.
-2. Compare `gpt-5.6-terra` with `claude-sonnet-5`, then retain the selected
+1. Configure the documented build watch paths and enable Cloudflare Access for Worker
+   Preview URLs.
+2. Add the active provider key, compare `gpt-5.6-terra` with `claude-sonnet-5`, then retain the selected
    provider/model variables and exactly one provider API key.
 3. After the model and site are ready, set `DEEPGENO_LIVE_INGESTION_ENABLED=true` and
    run one explicit manual live Gate 1 discovery.
