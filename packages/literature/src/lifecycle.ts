@@ -23,7 +23,7 @@ import type {
 import { generateTechnicalSummary, SUMMARY_PROMPT } from "./prompt.js";
 import {
   buildPublication,
-  renderPublicMarkdown,
+  PublicDeclassifier,
   toPublicFrontmatter,
 } from "./publication.js";
 import { renderCandidateReview, renderDraftReview } from "./review.js";
@@ -821,9 +821,10 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
     const slug = publicationSlug(stored.paper.title, stored.paper.id);
     const existing = await this.#store.loadPublication(slug);
     if (existing) {
+      const projection = new PublicDeclassifier().declassify(existing, draft);
       const target = await this.#store.writePublicPaper(
         existing.slug,
-        renderPublicMarkdown(existing, draft),
+        new TextDecoder().decode(projection.bytes),
       );
       return {
         command: "publish",
@@ -839,9 +840,10 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
       ...(await this.#store.loadDraftReviewContext(draft.id)),
     });
     const recordPath = await this.#store.savePublication(publication);
+    const projection = new PublicDeclassifier().declassify(publication, draft);
     const target = await this.#store.writePublicPaper(
       publication.slug,
-      renderPublicMarkdown(publication, draft),
+      new TextDecoder().decode(projection.bytes),
     );
     return {
       command: "publish",

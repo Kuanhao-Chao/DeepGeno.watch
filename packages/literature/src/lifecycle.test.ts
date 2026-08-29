@@ -242,11 +242,12 @@ describe("LiteratureLifecycle", () => {
       throw new Error("Unexpected projection");
     expect(catalog.papers).toHaveLength(1);
     expect(catalog.papers[0]).toMatchObject({
-      paperId,
+      schemaVersion: "2.0",
       priority: "must-read",
       evidence: { scope: "full-text" },
-      provenance: { review: { approvedBy: { id: "curator" } } },
+      provenance: { review: { approvedAt: now } },
     });
+    expect(catalog.papers[0]).not.toHaveProperty("paperId");
 
     const replay = await lifecycle.run({ kind: "synthesize", paperId });
     expect(replay).toMatchObject({ command: "synthesize", changedPaths: [] });

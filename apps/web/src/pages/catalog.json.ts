@@ -5,7 +5,6 @@ export async function GET() {
   const body = {
     schemaVersion: "1.0",
     papers: papers.map((paper) => ({
-      id: paper.data.paperId,
       slug: paperSlug(paper),
       path: paperHref(paper),
       title: paper.data.title,
@@ -15,6 +14,10 @@ export async function GET() {
       venue: paper.data.venue,
       doi: paper.data.doi,
       url: paper.data.url,
+      pdfUrl: paper.data.pdfUrl,
+      codeUrl: paper.data.codeUrl,
+      dataUrl: paper.data.dataUrl,
+      projectUrl: paper.data.projectUrl,
       hook: paper.data.hook,
       priority: paper.data.priority,
       progress: paper.data.progress,

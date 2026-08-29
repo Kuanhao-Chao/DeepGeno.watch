@@ -12,6 +12,12 @@ export {
   type SynthesizeCommand,
 } from "./lifecycle.js";
 export { GitFileStateStore } from "./store.js";
+export {
+  PublicDeclassifier,
+  renderPublicMarkdown,
+  toPublicFrontmatter,
+  type PublicProjection,
+} from "./publication.js";
 export { AllowlistedHttpClient, DEFAULT_SOURCE_HOSTS } from "./http.js";
 export { BioRxivSource } from "./sources/biorxiv.js";
 export { ArxivOaiSource } from "./sources/arxiv.js";

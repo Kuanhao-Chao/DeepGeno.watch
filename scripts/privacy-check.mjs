@@ -1,6 +1,9 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve, relative } from "node:path";
-import { privateMarkerPattern } from "./privacy-patterns.mjs";
+import {
+  privateMarkerPattern,
+  publicProvenanceLeakPattern,
+} from "./privacy-patterns.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const privateRoot = resolve(root, "data/private");
@@ -30,9 +33,12 @@ for (const file of buildFiles) {
   if ((await stat(file)).size > 10_000_000) continue;
   const contents = await readFile(file, "utf8").catch(() => "");
   buildText.push({ file, contents });
-  if (privateMarkerPattern.test(contents)) {
+  if (
+    privateMarkerPattern.test(contents) ||
+    publicProvenanceLeakPattern.test(contents)
+  ) {
     violations.push(
-      `${relative(root, file)} contains a private path or secret marker`,
+      `${relative(root, file)} contains a private path, secret, or provenance marker`,
     );
   }
 }

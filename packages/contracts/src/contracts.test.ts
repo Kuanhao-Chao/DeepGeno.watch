@@ -287,10 +287,10 @@ describe("configuration and publication", () => {
     expect(schema.type).toBe("object");
   });
 
-  it("keeps the public record detailed and human-approved", () => {
+  it("accepts only the v2 allowlisted public record", () => {
     const result = PublicPaperSchema.safeParse({
-      schemaVersion: "1.0",
-      paperId: "paper-1",
+      schemaVersion: "2.0",
+      slug: "a-paper-1234567",
       title: "A paper",
       authors: ["A. Author"],
       publishedAt: timestamp,
@@ -313,7 +313,6 @@ describe("configuration and publication", () => {
             documentKind: "abstract",
             sourceUrl: "https://example.org/paper-1",
             locator: { section: "Abstract" },
-            contentSha256: digest,
           },
         ],
       },
@@ -330,19 +329,22 @@ describe("configuration and publication", () => {
           provider: "openai",
           model: "configured-model",
           generatedAt: timestamp,
-          prompt: { id: "technical-summary", version: "1", sha256: digest },
+          prompt: { id: "technical-summary", version: "1" },
           outputSchemaVersion: "1.0",
-          inputSha256: digest,
         },
         review: {
-          draftId: "draft-1",
-          draftRevision: 1,
           approvedAt: timestamp,
-          approvedBy: { id: "curator", kind: "human" },
         },
       },
     });
     expect(result.success).toBe(true);
+
+    expect(
+      PublicPaperSchema.safeParse({
+        ...result.data,
+        paperId: "paper-1",
+      }).success,
+    ).toBe(false);
   });
 
   it("parses the rich summary independently", () => {

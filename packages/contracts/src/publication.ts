@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { PublicEvidenceCitationSchema } from "./evidence.js";
+import { PublicEvidenceCitationSchema as PrivateEvidenceCitationSchema } from "./evidence.js";
 import { PaperSchema } from "./paper.js";
 import {
   ActorSchema,
@@ -52,12 +52,48 @@ export const PublishedPaperSchema = z
     evidence: z
       .object({
         scope: EvidenceScopeSchema,
-        citations: z.array(PublicEvidenceCitationSchema).min(1),
+        citations: z.array(PrivateEvidenceCitationSchema).min(1),
       })
       .strict(),
   })
   .strict();
 export type PublishedPaper = z.infer<typeof PublishedPaperSchema>;
+
+const PublicEvidenceCitationSchema = z
+  .object({
+    id: z.string().regex(/^e[1-9][0-9]*$/),
+    documentKind: z.enum(["abstract", "jats", "html", "pdf", "supplement"]),
+    sourceUrl: UrlSchema,
+    locator: z
+      .object({
+        section: NonEmptyStringSchema.optional(),
+        paragraph: z.number().int().positive().optional(),
+        page: z.number().int().positive().optional(),
+        figure: NonEmptyStringSchema.optional(),
+        table: NonEmptyStringSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const PublicGenerationProvenanceSchema = z
+  .object({
+    provider: GenerationProvenanceSchema.shape.provider,
+    model: GenerationProvenanceSchema.shape.model,
+    generatedAt: GenerationProvenanceSchema.shape.generatedAt,
+    prompt: z
+      .object({
+        id: NonEmptyStringSchema,
+        version: NonEmptyStringSchema,
+      })
+      .strict(),
+    outputSchemaVersion: ContractVersionSchema,
+  })
+  .strict();
+
+const PublicReviewProvenanceSchema = z
+  .object({ approvedAt: IsoDateTimeSchema })
+  .strict();
 
 /**
  * The complete, public Astro frontmatter contract. Summary claims retain evidence
@@ -65,12 +101,8 @@ export type PublishedPaper = z.infer<typeof PublishedPaperSchema>;
  */
 export const PublicPaperSchema = z
   .object({
-    schemaVersion: ContractVersionSchema,
-    slug: z
-      .string()
-      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-      .optional(),
-    paperId: NonEmptyStringSchema,
+    schemaVersion: z.literal("2.0"),
+    slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     title: NonEmptyStringSchema,
     authors: z.array(NonEmptyStringSchema).min(1),
     publicationDate: IsoDateSchema.optional(),
@@ -83,6 +115,7 @@ export const PublicPaperSchema = z
     pdfUrl: UrlSchema.optional(),
     codeUrl: UrlSchema.optional(),
     dataUrl: UrlSchema.optional(),
+    projectUrl: UrlSchema.optional(),
     hook: NonEmptyStringSchema,
     priority: PrioritySchema,
     progress: ProgressSchema,
@@ -107,8 +140,8 @@ export const PublicPaperSchema = z
     limitations: z.array(EvidenceBackedStatementSchema),
     provenance: z
       .object({
-        generation: GenerationProvenanceSchema,
-        review: PublicationReviewSchema,
+        generation: PublicGenerationProvenanceSchema,
+        review: PublicReviewProvenanceSchema,
       })
       .strict(),
   })
