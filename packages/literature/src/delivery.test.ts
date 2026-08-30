@@ -385,6 +385,29 @@ describe("public GitHub delivery", () => {
     expect(remote.pullRequests).toHaveLength(1);
   });
 
+  it("does not append sealed bytes when the branch moves immediately before its atomic write", async () => {
+    const remote = new MemoryGitHubDeliveryPort();
+    const fixture = releaseFixture();
+    remote.moveBranchBeforeNextContentWrite(
+      `deepgeno/publish/${slug}`,
+      "content/public/papers/injected.md",
+    );
+
+    await expect(
+      deliverPublicRelease(request(fixture.release, fixture.delivery), remote),
+    ).rejects.toThrow(/branch head changed/);
+    expect(remote.contentWriteCount).toBe(0);
+    expect(
+      remote.branchBytes(`deepgeno/publish/${slug}`, projectionPath),
+    ).toBeUndefined();
+    expect(
+      remote.branchBytes(
+        `deepgeno/publish/${slug}`,
+        "content/public/papers/injected.md",
+      ),
+    ).toEqual(new TextEncoder().encode("injected"));
+  });
+
   it("rejects direct-main, traversal, mismatched path, branch, and repository coordinates before I/O", () => {
     const valid = {
       repository,
@@ -494,6 +517,7 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
   };
   contentWriteCount = 0;
   #moveAfterPullRequestFiles: { branch: string; path: string } | undefined;
+  #moveBeforeContentWrite: { branch: string; path: string } | undefined;
 
   constructor(faults: Partial<MemoryFaults> = {}) {
     this.#faults = {
@@ -571,6 +595,7 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
     repository: string;
     path: string;
     branch: string;
+    expectedHeadSha: string;
     bytes: Uint8Array;
     message: string;
   }): Promise<GitHubBranch> {
@@ -578,6 +603,16 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
     if (input.branch === "main") throw new Error("direct main write");
     const branch = this.branches.find((entry) => entry.name === input.branch);
     if (!branch) throw new Error("missing branch");
+    if (this.#moveBeforeContentWrite?.branch === input.branch) {
+      branch.files.set(this.#moveBeforeContentWrite.path, {
+        bytes: new TextEncoder().encode("injected"),
+        mode: "100644",
+      });
+      branch.sha = "c".repeat(40);
+      this.#moveBeforeContentWrite = undefined;
+    }
+    if (branch.sha !== input.expectedHeadSha)
+      throw new Error("branch head changed before atomic content write");
     branch.files.set(input.path, {
       bytes: Uint8Array.from(input.bytes),
       mode: "100644",
@@ -714,6 +749,10 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
 
   moveBranchAfterPullRequestFiles(branch: string, path: string): void {
     this.#moveAfterPullRequestFiles = { branch, path };
+  }
+
+  moveBranchBeforeNextContentWrite(branch: string, path: string): void {
+    this.#moveBeforeContentWrite = { branch, path };
   }
 
   mergePullRequest(

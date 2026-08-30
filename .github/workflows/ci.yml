@@ -21,12 +21,22 @@ jobs:
       - name: Validate immutable public delivery scope
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'deepgeno/publish/')
         uses: actions/checkout@v6
+        env:
+          DEEPGENO_GUARD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ env.DEEPGENO_GUARD_BASE_SHA }}
           fetch-depth: 0
       - name: Validate public delivery from trusted base
         if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'deepgeno/publish/')
-        run: node scripts/github/verify-public-delivery.mjs --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --branch "${{ github.head_ref }}"
+        env:
+          DEEPGENO_GUARD_BRANCH: ${{ github.head_ref }}
+          DEEPGENO_GUARD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEEPGENO_GUARD_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DEEPGENO_GUARD_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          DEEPGENO_GUARD_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          DEEPGENO_GUARD_BASE_REF: ${{ github.base_ref }}
+          DEEPGENO_GUARD_REPOSITORY: ${{ github.repository }}
+        run: node scripts/github/verify-public-delivery.mjs --base "$DEEPGENO_GUARD_BASE_SHA" --head "$DEEPGENO_GUARD_HEAD_SHA" --branch "$DEEPGENO_GUARD_BRANCH" --base-ref "$DEEPGENO_GUARD_BASE_REF" --base-repository "$DEEPGENO_GUARD_BASE_REPOSITORY" --head-repository "$DEEPGENO_GUARD_HEAD_REPOSITORY" --repository "$DEEPGENO_GUARD_REPOSITORY"
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:

@@ -22,20 +22,87 @@ export function validatePublicDeliveryDiff({ branch, files }) {
   return true;
 }
 
+export function validatePublicDeliveryContext({
+  branch,
+  baseRef,
+  baseRepository,
+  headRepository,
+  expectedRepository,
+  base,
+  head,
+}) {
+  if (!/^deepgeno\/publish\/[a-z0-9][a-z0-9-]*$/.test(branch))
+    throw new Error("public delivery branch is invalid");
+  if (baseRef !== "main") throw new Error("public delivery base must be main");
+  if (
+    baseRepository !== expectedRepository ||
+    headRepository !== expectedRepository
+  ) {
+    throw new Error("public delivery must use same-repository branches");
+  }
+  if (!isSha(base) || !isSha(head))
+    throw new Error(
+      "public delivery base and head must be immutable commit SHAs",
+    );
+}
+
 export function parseNameStatus(output) {
-  if (!output || output.includes("\0"))
+  const fields = output.split("\0");
+  if (fields.pop() !== "")
     throw new Error("Git diff name-status output is invalid");
-  return output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [status, path, previousPath, ...extra] = line.split("\t");
-      if (!status || !path || extra.length > 0)
+  const files = [];
+  while (fields.length > 0) {
+    const status = fields.shift();
+    if (!status) throw new Error("Git diff name-status output is invalid");
+    if (/^[RC]\d+$/.test(status)) {
+      const previousPath = fields.shift();
+      const path = fields.shift();
+      if (!previousPath || !path)
         throw new Error("Git diff name-status output is invalid");
-      return previousPath === undefined
-        ? { status, path }
-        : { status, path, previousPath };
-    });
+      files.push({ status, path, previousPath });
+      continue;
+    }
+    const path = fields.shift();
+    if (!/^[A-Z]+$/.test(status) || !path)
+      throw new Error("Git diff name-status output is invalid");
+    files.push({ status, path });
+  }
+  return files;
+}
+
+export function validatePublicDeliveryObjects({
+  baseEntries,
+  headEntries,
+  path,
+}) {
+  if (
+    !Array.isArray(baseEntries) ||
+    !Array.isArray(headEntries) ||
+    baseEntries.length !== 0
+  )
+    throw new Error("public delivery base must not contain the sealed path");
+  if (
+    headEntries.length !== 1 ||
+    headEntries[0]?.path !== path ||
+    headEntries[0]?.mode !== "100644" ||
+    headEntries[0]?.type !== "blob" ||
+    !isSha(headEntries[0]?.sha)
+  ) {
+    throw new Error("public delivery head must contain one regular blob");
+  }
+}
+
+export function parseLsTree(output) {
+  const entries = output.split("\0");
+  if (entries.pop() !== "") throw new Error("Git ls-tree output is invalid");
+  return entries.map((entry) => {
+    const tab = entry.indexOf("\t");
+    const [mode, type, sha, ...extra] = entry.slice(0, tab).split(" ");
+    const path = entry.slice(tab + 1);
+    if (tab < 1 || !mode || !type || !sha || extra.length > 0 || !path)
+      throw new Error("Git ls-tree output is invalid");
+    return { mode, type, sha, path };
+  });
 }
 
 function argument(name) {
@@ -49,21 +116,58 @@ function main() {
   const base = argument("--base");
   const head = argument("--head");
   const branch = argument("--branch");
-  if (
-    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(base) ||
-    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)
-  )
-    throw new Error("base and head must be immutable commit SHAs");
+  validatePublicDeliveryContext({
+    branch,
+    baseRef: argument("--base-ref"),
+    baseRepository: argument("--base-repository"),
+    headRepository: argument("--head-repository"),
+    expectedRepository: argument("--repository"),
+    base,
+    head,
+  });
   const result = spawnSync(
     "git",
-    ["diff", "--name-status", "--find-renames", "--no-ext-diff", base, head],
+    [
+      "diff",
+      "--name-status",
+      "-z",
+      "--find-renames",
+      "--no-ext-diff",
+      base,
+      head,
+    ],
     {
       encoding: "utf8",
     },
   );
   if (result.status !== 0)
     throw new Error(`git diff failed with exit ${String(result.status)}`);
-  validatePublicDeliveryDiff({ branch, files: parseNameStatus(result.stdout) });
+  if (
+    !validatePublicDeliveryDiff({
+      branch,
+      files: parseNameStatus(result.stdout),
+    })
+  )
+    throw new Error("public delivery branch is invalid");
+  const path = `content/public/papers/${branch.slice("deepgeno/publish/".length)}.md`;
+  validatePublicDeliveryObjects({
+    baseEntries: lsTree(base, path),
+    headEntries: lsTree(head, path),
+    path,
+  });
+}
+
+function lsTree(ref, path) {
+  const result = spawnSync("git", ["ls-tree", "-z", ref, "--", path], {
+    encoding: "utf8",
+  });
+  if (result.status !== 0)
+    throw new Error(`git ls-tree failed with exit ${String(result.status)}`);
+  return parseLsTree(result.stdout);
+}
+
+function isSha(value) {
+  return /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value);
 }
 
 if (

@@ -112,10 +112,12 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     repository: string;
     path: string;
     branch: string;
+    expectedHeadSha: string;
     bytes: Uint8Array;
     message: string;
   }): Promise<GitHubBranch> {
     assertContentCoordinates(input.repository, input.path, input.branch, false);
+    assertCommitSha(input.expectedHeadSha);
     invariant(
       input.message.trim().length > 0,
       "delivery_commit_message_invalid",
@@ -350,40 +352,106 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     repository: string;
     path: string;
     branch: string;
+    expectedHeadSha: string;
     bytes: Uint8Array;
     message: string;
   }): Promise<GitHubBranch> {
-    const value = await this.#requestJson(
-      input.repository,
-      "PUT",
-      `/contents/${encodePath(input.path)}`,
-      {
+    const parent = record(
+      await this.#requestJson(
+        input.repository,
+        "GET",
+        `/git/commits/${encodeURIComponent(input.expectedHeadSha)}`,
+      ),
+    );
+    invariant(
+      parent.sha === input.expectedHeadSha,
+      "github_response_invalid",
+      "GitHub parent commit response does not identify the expected head",
+    );
+    const parentTree = record(parent.tree);
+    invariant(
+      typeof parentTree.sha === "string",
+      "github_response_invalid",
+      "GitHub parent commit response omitted its tree SHA",
+    );
+    assertCommitSha(parentTree.sha);
+    const blob = record(
+      await this.#requestJson(input.repository, "POST", "/git/blobs", {
+        body: {
+          content: Buffer.from(input.bytes).toString("base64"),
+          encoding: "base64",
+        },
+      }),
+    );
+    invariant(
+      typeof blob.sha === "string",
+      "github_response_invalid",
+      "GitHub blob write response is invalid",
+    );
+    assertCommitSha(blob.sha);
+    const tree = record(
+      await this.#requestJson(input.repository, "POST", "/git/trees", {
+        body: {
+          base_tree: parentTree.sha,
+          tree: [
+            {
+              path: input.path,
+              mode: "100644",
+              type: "blob",
+              sha: blob.sha,
+            },
+          ],
+        },
+      }),
+    );
+    invariant(
+      typeof tree.sha === "string",
+      "github_response_invalid",
+      "GitHub tree write response is invalid",
+    );
+    assertCommitSha(tree.sha);
+    const commit = record(
+      await this.#requestJson(input.repository, "POST", "/git/commits", {
         body: {
           message: input.message,
-          content: Buffer.from(input.bytes).toString("base64"),
-          branch: input.branch,
+          tree: tree.sha,
+          parents: [input.expectedHeadSha],
+        },
+      }),
+    );
+    invariant(
+      typeof commit.sha === "string" &&
+        record(commit.tree).sha === tree.sha &&
+        Array.isArray(commit.parents) &&
+        commit.parents.length === 1 &&
+        record(commit.parents[0]).sha === input.expectedHeadSha,
+      "github_response_invalid",
+      "GitHub commit write response is invalid",
+    );
+    assertCommitSha(commit.sha);
+    const value = await this.#requestJson(
+      input.repository,
+      "PATCH",
+      `/git/refs/${encodeRef(input.branch)}`,
+      {
+        body: {
+          sha: commit.sha,
+          force: false,
         },
       },
     );
-    const object = record(value);
-    const content = record(object.content);
-    const commit = record(object.commit);
+    const updated = parseBranch(value, input.branch);
     invariant(
-      content.type === "file" &&
-        content.path === input.path &&
-        typeof content.sha === "string" &&
-        typeof commit.sha === "string",
+      updated.sha === commit.sha,
       "github_response_invalid",
-      "GitHub content write response is invalid",
+      "GitHub ref update response does not identify the created commit",
     );
-    assertCommitSha(content.sha);
-    assertCommitSha(commit.sha);
-    return { name: input.branch, sha: commit.sha };
+    return updated;
   }
 
   async #requestJson(
     repository: string,
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "PATCH",
     path: string,
     options: { body?: unknown; allowNotFound?: boolean } = {},
   ): Promise<unknown | undefined> {

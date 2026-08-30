@@ -163,3 +163,21 @@
 - Full: `npm test` — 15 files, 120 tests passed; `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, and `npm run deploy:dry-run` passed.
 - Initial `npm run format:check` exposed pre-existing formatting drift in planning files and `packages/literature/src/cli.ts`; those files were formatted before the final formatting recheck.
 - Final after-format verification: `npm test` — 15 files, 121 tests passed; `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, `npm run deploy:dry-run`, `npm run format:check`, and `git diff --check` all passed.
+
+## Fix round 3 hardening
+
+### Trusted guard RED/GREEN
+
+- RED: the guard interpolated PR values directly in its shell command and a delivery-prefix branch outside the exact grammar returned without a CLI failure.
+- GREEN: PR-derived values are step environment values and the shell command references only quoted environment variables. The validator requires the exact delivery branch grammar, `main`, immutable base/head SHAs, and base/head repository names equal to `github.repository`. NUL-safe diff and tree parsing require exactly one `A` path, absent base entry, and one `100644 blob` head entry. Subprocess tests cover a Git-valid shell-looking branch, nested branch, regular file, executable, symlink, and gitlink.
+
+### Atomic remote content write RED/GREEN
+
+- RED: the adapter used the mutable branch-name Contents API write without a parent SHA condition.
+- GREEN: the port requires `expectedHeadSha`; the adapter serializes Git-object writes as exact parent commit read, base64 blob POST, base-tree POST with one `100644` blob entry, single-parent commit POST, and non-force ref PATCH. A fake race moves the branch immediately before write and leaves the raced tip/injected file untouched with zero sealed writes. Existing ambiguous-success reconciliation remains covered.
+
+### Fix round 3 focused verification
+
+- `npx vitest run scripts/github/verify-public-delivery.test.ts packages/literature/src/delivery.test.ts packages/literature/src/github-rest.test.ts packages/literature/src/release.test.ts scripts/github/workflow-lib.test.ts` — 92 tests passed.
+- `npm run typecheck` — passed.
+- Final matrix: `npm test` — 15 files, 135 tests passed; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.

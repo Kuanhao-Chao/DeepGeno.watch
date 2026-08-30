@@ -78,6 +78,7 @@ export interface GitHubDeliveryPort {
     repository: string;
     path: string;
     branch: string;
+    expectedHeadSha: string;
     bytes: Uint8Array;
     message: string;
   }): Promise<GitHubBranch>;
@@ -371,6 +372,7 @@ export async function deliverPublicRelease(
         repository: coordinates.repository,
         path: coordinates.path,
         branch,
+        expectedHeadSha: remoteBranch.sha,
         bytes: projection.bytes,
         message: `Add literature summary: ${projection.slug}`,
       });

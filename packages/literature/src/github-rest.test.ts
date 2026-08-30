@@ -19,9 +19,17 @@ describe("GitHubRestDeliveryAdapter", () => {
         ref: `refs/heads/${branch}`,
         object: { type: "commit", sha: "a".repeat(40) },
       }),
+      jsonResponse({ sha: "a".repeat(40), tree: { sha: "d".repeat(40) } }),
+      jsonResponse({ sha: "e".repeat(40) }),
+      jsonResponse({ sha: "f".repeat(40) }),
       jsonResponse({
-        content: { type: "file", path: paperPath, sha: "c".repeat(40) },
-        commit: { sha: "b".repeat(40) },
+        sha: "b".repeat(40),
+        tree: { sha: "f".repeat(40) },
+        parents: [{ sha: "a".repeat(40) }],
+      }),
+      jsonResponse({
+        ref: `refs/heads/${branch}`,
+        object: { type: "commit", sha: "b".repeat(40) },
       }),
       jsonResponse({
         ref: `refs/heads/${branch}`,
@@ -74,6 +82,7 @@ describe("GitHubRestDeliveryAdapter", () => {
       repository,
       path: paperPath,
       branch,
+      expectedHeadSha: "a".repeat(40),
       bytes: new TextEncoder().encode("exact sealed bytes"),
       message: `Add literature summary: ${slug}`,
     });
@@ -104,7 +113,7 @@ describe("GitHubRestDeliveryAdapter", () => {
       pullRequestNumber: 7,
     });
 
-    expect(requests).toHaveLength(14);
+    expect(requests).toHaveLength(18);
     for (const request of requests) {
       expect(request.headers.get("authorization")).toBe(
         "Bearer installation-token",
@@ -119,19 +128,28 @@ describe("GitHubRestDeliveryAdapter", () => {
       ref: `refs/heads/${branch}`,
       sha: "a".repeat(40),
     });
-    expect(await requests[2]!.json()).toEqual({
-      message: `Add literature summary: ${slug}`,
+    expect(await requests[3]!.json()).toEqual({
       content: Buffer.from("exact sealed bytes").toString("base64"),
-      branch,
+      encoding: "base64",
     });
-    expect(requests[11]!.url).toContain("state=all");
-    expect(requests[11]!.url).toContain(
+    expect(await requests[4]!.json()).toEqual({
+      base_tree: "d".repeat(40),
+      tree: [
+        { path: paperPath, mode: "100644", type: "blob", sha: "e".repeat(40) },
+      ],
+    });
+    expect(await requests[6]!.json()).toEqual({
+      sha: "b".repeat(40),
+      force: false,
+    });
+    expect(requests[15]!.url).toContain("state=all");
+    expect(requests[15]!.url).toContain(
       `head=${encodeURIComponent(`example:${branch}`)}`,
     );
-    expect(requests[11]!.url).toContain("base=main");
+    expect(requests[15]!.url).toContain("base=main");
   });
 
-  it("serializes concurrent Contents API writes", async () => {
+  it("serializes concurrent atomic Git-object writes", async () => {
     let activeWrites = 0;
     let maximumActiveWrites = 0;
     let releaseFirst!: () => void;
@@ -147,9 +165,23 @@ describe("GitHubRestDeliveryAdapter", () => {
         maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
         if (requestCount === 1) await firstGate;
         activeWrites -= 1;
+        const phase = requestCount % 5;
+        if (phase === 1)
+          return jsonResponse({
+            sha: "a".repeat(40),
+            tree: { sha: "d".repeat(40) },
+          });
+        if (phase === 2) return jsonResponse({ sha: "e".repeat(40) });
+        if (phase === 3) return jsonResponse({ sha: "f".repeat(40) });
+        if (phase === 4)
+          return jsonResponse({
+            sha: "b".repeat(40),
+            tree: { sha: "f".repeat(40) },
+            parents: [{ sha: "a".repeat(40) }],
+          });
         return jsonResponse({
-          content: { type: "file", path: paperPath, sha: "c".repeat(40) },
-          commit: { sha: "b".repeat(40) },
+          ref: `refs/heads/${branch}`,
+          object: { type: "commit", sha: "b".repeat(40) },
         });
       },
     });
@@ -158,6 +190,7 @@ describe("GitHubRestDeliveryAdapter", () => {
       repository,
       path: paperPath,
       branch,
+      expectedHeadSha: "a".repeat(40),
       bytes: new TextEncoder().encode("first"),
       message: "first",
     });
@@ -165,6 +198,7 @@ describe("GitHubRestDeliveryAdapter", () => {
       repository,
       path: paperPath,
       branch,
+      expectedHeadSha: "a".repeat(40),
       bytes: new TextEncoder().encode("second"),
       message: "second",
     });
@@ -175,7 +209,7 @@ describe("GitHubRestDeliveryAdapter", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(maximumActiveWrites).toBe(1);
-    expect(requestCount).toBe(2);
+    expect(requestCount).toBe(10);
   });
 
   it("refuses direct-main writes and malformed GitHub responses before trusting them", async () => {
@@ -193,6 +227,7 @@ describe("GitHubRestDeliveryAdapter", () => {
         repository,
         path: paperPath,
         branch: "main",
+        expectedHeadSha: "a".repeat(40),
         bytes: new Uint8Array(),
         message: "forbidden",
       }),
