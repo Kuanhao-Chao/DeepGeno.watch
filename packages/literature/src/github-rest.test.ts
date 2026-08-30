@@ -24,9 +24,17 @@ describe("GitHubRestDeliveryAdapter", () => {
         commit: { sha: "b".repeat(40) },
       }),
       jsonResponse({
+        ref: `refs/heads/${branch}`,
+        object: { type: "commit", sha: "b".repeat(40) },
+      }),
+      jsonResponse({ tree: { sha: "d".repeat(40) } }),
+      treeResponse("d", "content", "a", "tree", "040000"),
+      treeResponse("a", "public", "b", "tree", "040000"),
+      treeResponse("b", "papers", "c", "tree", "040000"),
+      treeResponse("c", `${slug}.md`, "e", "blob", "100644"),
+      jsonResponse({
+        sha: "e".repeat(40),
         type: "file",
-        path: paperPath,
-        sha: "c".repeat(40),
         encoding: "base64",
         content: Buffer.from("exact sealed bytes").toString("base64"),
       }),
@@ -96,7 +104,7 @@ describe("GitHubRestDeliveryAdapter", () => {
       pullRequestNumber: 7,
     });
 
-    expect(requests).toHaveLength(8);
+    expect(requests).toHaveLength(14);
     for (const request of requests) {
       expect(request.headers.get("authorization")).toBe(
         "Bearer installation-token",
@@ -118,11 +126,11 @@ describe("GitHubRestDeliveryAdapter", () => {
       content: Buffer.from("exact sealed bytes").toString("base64"),
       branch,
     });
-    expect(requests[5]!.url).toContain("state=all");
-    expect(requests[5]!.url).toContain(
+    expect(requests[11]!.url).toContain("state=all");
+    expect(requests[11]!.url).toContain(
       `head=${encodeURIComponent(`example:${branch}`)}`,
     );
-    expect(requests[5]!.url).toContain("base=main");
+    expect(requests[11]!.url).toContain("base=main");
   });
 
   it("serializes concurrent Contents API writes", async () => {
@@ -213,6 +221,73 @@ describe("GitHubRestDeliveryAdapter", () => {
       adapter.getBaseBranch({ repository, base: "main" }),
     ).rejects.toMatchObject({ code: "github_response_invalid" });
   });
+
+  it.each([
+    ["symlink", "blob", "120000"],
+    ["executable", "blob", "100755"],
+    ["submodule", "commit", "160000"],
+  ])("refuses a %s entry even when it names the sealed path", async (_name, type, mode) => {
+    const responses = gitReadResponses(type, mode);
+    const adapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async () => responses.shift() ?? jsonResponse({}),
+    });
+
+    await expect(
+      adapter.getContent({ repository, path: paperPath, ref: branch }),
+    ).rejects.toMatchObject({ code: "github_content_not_regular_file" });
+  });
+
+  it("returns missing tree entries as absent and rejects malformed target entries", async () => {
+    const missing = gitReadResponses("blob", "100644");
+    missing[5] = treeResponse("c", "other.md", "e", "blob", "100644");
+    const missingAdapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async () => missing.shift() ?? jsonResponse({}),
+    });
+    await expect(
+      missingAdapter.getContent({ repository, path: paperPath, ref: branch }),
+    ).resolves.toBeUndefined();
+
+    const malformed = gitReadResponses("blob", "100644");
+    malformed[5] = jsonResponse({
+      sha: "c".repeat(40),
+      truncated: false,
+      tree: [{ path: `${slug}.md`, mode: "100644", type: "blob" }],
+    });
+    const malformedAdapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async () => malformed.shift() ?? jsonResponse({}),
+    });
+    await expect(
+      malformedAdapter.getContent({ repository, path: paperPath, ref: branch }),
+    ).rejects.toMatchObject({ code: "github_response_invalid" });
+  });
+
+  it("retains rename source paths so the coordinator can reject non-additive diffs", async () => {
+    const adapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async () =>
+        jsonResponse({
+          files: [
+            {
+              filename: paperPath,
+              previous_filename: "content/public/papers/old.md",
+              status: "renamed",
+            },
+          ],
+        }),
+    });
+    await expect(
+      adapter.compare({ repository, base: "main", head: branch }),
+    ).resolves.toEqual([
+      {
+        path: paperPath,
+        previousPath: "content/public/papers/old.md",
+        status: "renamed",
+      },
+    ]);
+  });
 });
 
 function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
@@ -220,4 +295,39 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
     status: init.status ?? 200,
     headers: { "content-type": "application/json", ...init.headers },
   });
+}
+
+function treeResponse(
+  shaLetter: string,
+  path: string,
+  childLetter: string,
+  type: string,
+  mode: string,
+): Response {
+  return jsonResponse({
+    sha: shaLetter.repeat(40),
+    truncated: false,
+    tree: [
+      {
+        path,
+        sha: childLetter.repeat(40),
+        type,
+        mode,
+      },
+    ],
+  });
+}
+
+function gitReadResponses(type: string, mode: string): Response[] {
+  return [
+    jsonResponse({
+      ref: `refs/heads/${branch}`,
+      object: { type: "commit", sha: "b".repeat(40) },
+    }),
+    jsonResponse({ tree: { sha: "d".repeat(40) } }),
+    treeResponse("d", "content", "a", "tree", "040000"),
+    treeResponse("a", "public", "b", "tree", "040000"),
+    treeResponse("b", "papers", "c", "tree", "040000"),
+    treeResponse("c", `${slug}.md`, "e", type, mode),
+  ];
 }

@@ -4,8 +4,10 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertPrivateRepository,
   assertMergedByCurator,
+  assertPrivateStateCheckout,
   automationWorkingDirectory,
   buildLiteratureInvocation,
   executeApprovedPublication,
@@ -242,6 +245,44 @@ describe("GitHub literature workflow boundaries", () => {
     );
   });
 
+  it("binds private automation to the exact real private checkout and event origin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-checkout-test-"));
+    roots.push(root);
+    const projectRoot = path.join(root, "engine");
+    const stateRoot = path.join(root, "state");
+    await mkdir(projectRoot);
+    await mkdir(stateRoot);
+    git(stateRoot, ["init"]);
+    git(stateRoot, ["remote", "add", "origin", "https://github.com/example/private-state.git"]);
+    const event = { repository: { full_name: "example/private-state" } };
+
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).resolves.toMatchObject({ repository: "example/private-state" });
+    const nestedRoot = path.join(stateRoot, "nested");
+    await mkdir(nestedRoot);
+    await expect(
+      assertPrivateStateCheckout({
+        roots: { projectRoot, stateRoot: nestedRoot },
+        event,
+      }),
+    ).rejects.toThrow(/checkout root/);
+    git(stateRoot, ["remote", "set-url", "origin", "https://github.com/example/wrong.git"]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/origin does not match/);
+    git(stateRoot, ["remote", "remove", "origin"]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/remote.origin.url/);
+    git(stateRoot, ["remote", "add", "origin", "https://github.com/example/private-state.git"]);
+    const linked = path.join(root, "linked-state");
+    await symlink(stateRoot, linked);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot: linked }, event }),
+    ).rejects.toThrow(/symlink/);
+  });
+
   it("runs shadow discovery in a disposable copy without mutating or accepting real state", async () => {
     const fixture = await stagedFixture();
     let accepted = 0;
@@ -421,4 +462,11 @@ async function writePrivateMutation(
   );
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, value, "utf8");
+}
+
+function git(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`);
+  }
 }

@@ -33,8 +33,21 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const { projectRoot, stateRoot } = resolveCliRoots(parsed.command, {
     flags: parsed.flags,
   });
-  const config = await loadPipelineConfig(projectRoot);
   const store = new GitFileStateStore(stateRoot);
+  if (parsed.command === "deliver") {
+    const deliveryConfig = resolvePublicDeliveryConfig(process.env);
+    const report = await deliverStoredPublication({
+      store,
+      slug: requiredFlag(parsed, "slug"),
+      repository: deliveryConfig.repository,
+      port: new GitHubRestDeliveryAdapter({ token: deliveryConfig.token }),
+    });
+    process.stdout.write(
+      `${JSON.stringify({ command: parsed.command, ...(report as object) })}\n`,
+    );
+    return;
+  }
+  const config = await loadPipelineConfig(projectRoot);
   const http = new AllowlistedHttpClient({
     minimumIntervalMsByHost: {
       ...(config.arxiv.enabled
@@ -202,16 +215,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       report = await lifecycle.run({
         kind: "publish",
         draftId: requiredFlag(parsed, "draft"),
-      });
-      break;
-    }
-    case "deliver": {
-      const deliveryConfig = resolvePublicDeliveryConfig(process.env);
-      report = await deliverStoredPublication({
-        store,
-        slug: requiredFlag(parsed, "slug"),
-        repository: deliveryConfig.repository,
-        port: new GitHubRestDeliveryAdapter({ token: deliveryConfig.token }),
       });
       break;
     }

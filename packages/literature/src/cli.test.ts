@@ -128,6 +128,25 @@ describe("literature CLI roots", () => {
     );
   });
 
+  it("loads a sealed delivery before unrelated engine configuration", async () => {
+    const stateRoot = await mkdtemp(path.join(tmpdir(), "deepgeno-cli-state-"));
+    roots.push(stateRoot);
+    vi.stubEnv("DEEPGENO_PUBLIC_REPOSITORY", "example/deepgeno-watch");
+    vi.stubEnv("DEEPGENO_PUBLIC_GITHUB_TOKEN", "installation-token");
+
+    await expect(
+      main([
+        "deliver",
+        "--project-root",
+        path.join(stateRoot, "missing-engine-config"),
+        "--state-root",
+        stateRoot,
+        "--slug",
+        "sealed-paper-a1b2c3d",
+      ]),
+    ).rejects.toMatchObject({ code: "publication_missing" });
+  });
+
   it("loads config from project-root while reading state only from state-root", async () => {
     const stateRoot = await mkdtemp(path.join(tmpdir(), "deepgeno-cli-state-"));
     roots.push(stateRoot);

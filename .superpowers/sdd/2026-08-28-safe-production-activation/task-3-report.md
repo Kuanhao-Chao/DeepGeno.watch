@@ -120,3 +120,26 @@
 - `npm run privacy` — passed (26 build files).
 - `npm run deploy:dry-run` — passed with Wrangler 4.127.0.
 - `git diff --check` — passed.
+
+## Fix round 1 hardening
+
+### Git-object read and diff-status RED/GREEN
+
+- RED: the prior adapter used `GET /contents`, which dereferences symlinks and does not expose the tree mode; changed-file checks accepted any status.
+- GREEN: `npx vitest run packages/literature/src/delivery.test.ts packages/literature/src/github-rest.test.ts` — 29 tests passed.
+- The adapter now resolves ref → commit → non-recursive trees → exact blob, requires the terminal `100644` blob, and decodes that blob’s base64 bytes. Tests cover normal mode, symlink, executable, submodule, missing, malformed tree entries, and rename `previous_filename`. Delivery accepts exactly one `added` file at the sealed destination with no previous path.
+
+### Repository/receipt and failed-reconciliation RED/GREEN
+
+- RED: deterministic head lookup could reuse a changed repository/PR and `failed` deliveries could not reconcile an explicitly reopened or later merged recorded PR.
+- GREEN: focused delivery/release tests now require public canonical repository metadata before remote mutation, fetch stored receipt PRs by exact number, and reject missing/changed heads with no writes. `failed → pr-open|merged` is now legal only through that recorded receipt and clears fixed failure metadata; `failed → pending` remains an explicit store transition that automation never invokes.
+
+### Root binding, early delivery, and title RED/GREEN
+
+- RED: automation trusted event privacy/root strings; CLI constructed source configuration before delivery; long public titles were rejected.
+- GREEN: focused workflow/CLI tests use a real temporary Git checkout to reject nested, wrong-origin, missing-origin, and symlink roots, while accepting the exact event checkout. CLI `deliver` reads private release state before config loading; a Unicode title is deterministically limited to 256 code points only in the GitHub title and is retained in the public body.
+
+### Fix round 1 verification
+
+- `npm test` — 14 files, 106 tests passed.
+- `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, `npm run deploy:dry-run`, and `git diff --check` — passed.

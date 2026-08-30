@@ -8,10 +8,12 @@ import {
   type GitHubContent,
   type GitHubDeliveryPort,
   type GitHubPullRequest,
+  type GitHubRepository,
 } from "./delivery.js";
 import {
   createPendingDelivery,
   sealPublicProjection,
+  transitionDelivery,
   type Delivery,
   type PrivateRelease,
 } from "./release.js";
@@ -198,6 +200,135 @@ describe("public GitHub delivery", () => {
     expect(remote.pullRequests).toHaveLength(1);
   });
 
+  it.each(["120000", "100755"])(
+    "refuses non-regular %s target entries before PR creation",
+    async (mode) => {
+      const remote = new MemoryGitHubDeliveryPort();
+      const fixture = releaseFixture();
+      remote.seedBranch(`deepgeno/publish/${slug}`, {
+        [projectionPath]: sealedBytes,
+      });
+      remote.seedBranchEntry(
+        `deepgeno/publish/${slug}`,
+        projectionPath,
+        sealedBytes,
+        mode,
+      );
+
+      await expect(
+        deliverPublicRelease(request(fixture.release, fixture.delivery), remote),
+      ).rejects.toMatchObject({ code: "delivery_content_conflict" });
+      expect(remote.pullRequests).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    { status: "renamed", previousPath: "content/public/papers/old.md" },
+    { status: "removed" },
+    { status: "modified" },
+    { status: "copied" },
+  ])("refuses existing PR file status %#", async (changed) => {
+    const remote = new MemoryGitHubDeliveryPort();
+    const fixture = releaseFixture();
+    await deliverPublicRelease(request(fixture.release, fixture.delivery), remote);
+    remote.setPullRequestFiles(1, [
+      { path: projectionPath, ...changed },
+    ]);
+
+    await expect(
+      deliverPublicRelease(request(fixture.release, fixture.delivery), remote),
+    ).rejects.toMatchObject({ code: "delivery_file_scope_invalid" });
+  });
+
+  it("rejects non-public repository metadata before any public mutation", async () => {
+    const remote = new MemoryGitHubDeliveryPort();
+    remote.repositoryMetadata = {
+      ...remote.repositoryMetadata,
+      private: true,
+      visibility: "private",
+    };
+    const fixture = releaseFixture();
+
+    await expect(
+      deliverPublicRelease(request(fixture.release, fixture.delivery), remote),
+    ).rejects.toMatchObject({ code: "delivery_repository_untrusted" });
+    expect(remote.branches).toHaveLength(0);
+    expect(remote.pullRequests).toHaveLength(0);
+  });
+
+  it("anchors a stored receipt to its exact PR and rejects changed remote heads without mutation", async () => {
+    const remote = new MemoryGitHubDeliveryPort();
+    const fixture = releaseFixture();
+    const initial = await deliverPublicRelease(
+      request(fixture.release, fixture.delivery),
+      remote,
+    );
+    const receiptDelivery = transitionDelivery(
+      fixture.delivery,
+      "pr-open",
+      "2026-08-28T07:01:00.000Z",
+      { remote: initial.remote },
+    );
+    remote.pullRequests[0]!.headSha = "a".repeat(40);
+
+    await expect(
+      deliverPublicRelease(request(fixture.release, receiptDelivery), remote),
+    ).rejects.toMatchObject({ code: "delivery_receipt_conflict" });
+    expect(remote.contentWriteCount).toBe(1);
+    expect(remote.pullRequests).toHaveLength(1);
+  });
+
+  it("reconciles only the same failed receipt when its PR is reopened or later merged", async () => {
+    const remote = new MemoryGitHubDeliveryPort();
+    const fixture = releaseFixture();
+    await deliverPublicRelease(request(fixture.release, fixture.delivery), remote);
+    remote.closePullRequest(1);
+    const failed = await deliverPublicRelease(
+      request(fixture.release, fixture.delivery),
+      remote,
+    );
+    if (failed.state !== "failed") throw new Error("Expected closed PR failure");
+    const failedDelivery = transitionDelivery(
+      fixture.delivery,
+      "failed",
+      "2026-08-28T07:01:00.000Z",
+      { remote: failed.remote, failure: failed.failure },
+    );
+    remote.pullRequests[0]!.state = "open";
+    const reopened = await deliverPublicRelease(
+      request(fixture.release, failedDelivery),
+      remote,
+    );
+    expect(reopened).toMatchObject({ state: "pr-open", remote: failed.remote });
+    remote.mergePullRequest(1, { deleteBranch: true });
+    const merged = await deliverPublicRelease(
+      request(fixture.release, failedDelivery),
+      remote,
+    );
+    expect(merged).toMatchObject({ state: "merged", remote: failed.remote });
+    expect(remote.pullRequests).toHaveLength(1);
+  });
+
+  it("truncates only the Unicode-safe GitHub title while retaining the full public body title", async () => {
+    const remote = new MemoryGitHubDeliveryPort();
+    const fixture = releaseFixture();
+    const title = `${"🧬".repeat(300)} Public genome model`;
+    await deliverPublicRelease(
+      {
+        ...request(fixture.release, fixture.delivery),
+        publicMetadata: {
+          title,
+          sourceUrl: "https://example.org/public-paper",
+        },
+      },
+      remote,
+    );
+    const pullRequest = remote.pullRequests[0]!;
+    expect(Array.from(pullRequest.title)).toHaveLength(256);
+    expect(pullRequest.title.endsWith("…")).toBe(true);
+    expect(pullRequest.body).toContain(title);
+  });
+
   it("reconciles timeouts after branch, content, and PR creation without duplicates", async () => {
     const remote = new MemoryGitHubDeliveryPort({
       throwAfterCreateBranch: true,
@@ -291,7 +422,7 @@ function request(release: PrivateRelease, delivery: Delivery) {
 type StoredBranch = {
   name: string;
   sha: string;
-  files: Map<string, Uint8Array>;
+  files: Map<string, { bytes: Uint8Array; mode: string }>;
 };
 type StoredPullRequest = {
   number: number;
@@ -315,8 +446,14 @@ interface MemoryFaults {
 class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
   readonly branches: StoredBranch[] = [];
   readonly pullRequests: StoredPullRequest[] = [];
-  readonly #main = new Map<string, Uint8Array>();
+  readonly #main = new Map<string, { bytes: Uint8Array; mode: string }>();
   readonly #faults: MemoryFaults;
+  repositoryMetadata: GitHubRepository = {
+    fullName: repository,
+    private: false,
+    visibility: "public" as const,
+    defaultBranch: "main",
+  };
   contentWriteCount = 0;
 
   constructor(
@@ -328,6 +465,11 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
       throwAfterCreatePullRequest: false,
       ...faults,
     };
+  }
+
+  async getRepository(input: { repository: string }) {
+    this.assertRepository(input.repository);
+    return this.repositoryMetadata;
   }
 
   async getBranch(input: {
@@ -375,9 +517,9 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
       input.ref === "main"
         ? this.#main
         : this.branches.find((branch) => branch.name === input.ref)?.files;
-    const bytes = files?.get(input.path);
-    return bytes
-      ? { path: input.path, bytes: Uint8Array.from(bytes), blobSha: "c".repeat(40) }
+    const file = files?.get(input.path);
+    return file
+      ? { path: input.path, bytes: Uint8Array.from(file.bytes), blobSha: "c".repeat(40), mode: file.mode }
       : undefined;
   }
 
@@ -392,7 +534,7 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
     if (input.branch === "main") throw new Error("direct main write");
     const branch = this.branches.find((entry) => entry.name === input.branch);
     if (!branch) throw new Error("missing branch");
-    branch.files.set(input.path, Uint8Array.from(input.bytes));
+    branch.files.set(input.path, { bytes: Uint8Array.from(input.bytes), mode: "100644" });
     branch.sha = "b".repeat(40);
     this.contentWriteCount += 1;
     if (this.#faults.throwAfterPutContent)
@@ -425,6 +567,14 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
       (pullRequest) =>
         pullRequest.base === input.base && pullRequest.head === input.head,
     );
+  }
+
+  async getPullRequest(input: {
+    repository: string;
+    pullRequestNumber: number;
+  }): Promise<GitHubPullRequest | undefined> {
+    this.assertRepository(input.repository);
+    return this.pullRequests.find((entry) => entry.number === input.pullRequestNumber);
   }
 
   async listPullRequestFiles(input: {
@@ -473,8 +623,30 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
   seedBranch(branchName: string, values: Record<string, Uint8Array>): void {
     const files = cloneFiles(this.#main);
     for (const [filePath, bytes] of Object.entries(values))
-      files.set(filePath, Uint8Array.from(bytes));
+      files.set(filePath, { bytes: Uint8Array.from(bytes), mode: "100644" });
     this.branches.push({ name: branchName, sha: "b".repeat(40), files });
+  }
+
+  seedBranchEntry(
+    branchName: string,
+    filePath: string,
+    bytes: Uint8Array,
+    mode: string,
+  ): void {
+    const branch = this.branches.find((entry) => entry.name === branchName);
+    if (!branch) throw new Error("missing branch");
+    branch.files.set(filePath, { bytes: Uint8Array.from(bytes), mode });
+  }
+
+  setPullRequestFiles(
+    pullRequestNumber: number,
+    files: GitHubChangedFile[],
+  ): void {
+    const pullRequest = this.pullRequests.find(
+      (entry) => entry.number === pullRequestNumber,
+    );
+    if (!pullRequest) throw new Error("missing pull request");
+    pullRequest.files = files;
   }
 
   mergePullRequest(
@@ -489,9 +661,13 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
       (entry) => entry.name === pullRequest.head,
     );
     if (!branch) throw new Error("missing branch");
-    for (const file of pullRequest.files) {
-      const bytes = branch.files.get(file.path);
-      if (bytes) this.#main.set(file.path, Uint8Array.from(bytes));
+    for (const changedFile of pullRequest.files) {
+      const file = branch.files.get(changedFile.path);
+      if (file)
+        this.#main.set(changedFile.path, {
+          bytes: Uint8Array.from(file.bytes),
+          mode: file.mode,
+        });
     }
     pullRequest.state = "closed";
     pullRequest.merged = true;
@@ -511,15 +687,15 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
   }
 
   branchBytes(branchName: string, filePath: string): Uint8Array | undefined {
-    const bytes = this.branches
+    const file = this.branches
       .find((branch) => branch.name === branchName)
       ?.files.get(filePath);
-    return bytes ? Uint8Array.from(bytes) : undefined;
+    return file ? Uint8Array.from(file.bytes) : undefined;
   }
 
   mainBytes(filePath: string): Uint8Array | undefined {
-    const bytes = this.#main.get(filePath);
-    return bytes ? Uint8Array.from(bytes) : undefined;
+    const file = this.#main.get(filePath);
+    return file ? Uint8Array.from(file.bytes) : undefined;
   }
 
   comparePaths(branchName: string): string[] {
@@ -534,16 +710,19 @@ class MemoryGitHubDeliveryPort implements GitHubDeliveryPort {
 }
 
 function cloneFiles(
-  source: ReadonlyMap<string, Uint8Array>,
-): Map<string, Uint8Array> {
+  source: ReadonlyMap<string, { bytes: Uint8Array; mode: string }>,
+): Map<string, { bytes: Uint8Array; mode: string }> {
   return new Map(
-    [...source.entries()].map(([path, bytes]) => [path, Uint8Array.from(bytes)]),
+    [...source.entries()].map(([path, file]) => [
+      path,
+      { bytes: Uint8Array.from(file.bytes), mode: file.mode },
+    ]),
   );
 }
 
 function differences(
-  left: ReadonlyMap<string, Uint8Array>,
-  right: ReadonlyMap<string, Uint8Array>,
+  left: ReadonlyMap<string, { bytes: Uint8Array; mode: string }>,
+  right: ReadonlyMap<string, { bytes: Uint8Array; mode: string }>,
 ): string[] {
   const paths = new Set([...left.keys(), ...right.keys()]);
   return [...paths]
@@ -552,9 +731,9 @@ function differences(
 }
 
 function equalBytes(
-  left: Uint8Array | undefined,
-  right: Uint8Array | undefined,
+  left: { bytes: Uint8Array; mode: string } | undefined,
+  right: { bytes: Uint8Array; mode: string } | undefined,
 ): boolean {
   if (!left || !right) return left === right;
-  return Buffer.from(left).equals(Buffer.from(right));
+  return Buffer.from(left.bytes).equals(Buffer.from(right.bytes));
 }

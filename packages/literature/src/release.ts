@@ -136,7 +136,7 @@ export function transitionDelivery(
     pending: ["pr-open", "merged", "failed"],
     "pr-open": ["merged", "failed"],
     merged: [],
-    failed: ["pending"],
+    failed: ["pending", "pr-open", "merged"],
   };
   if (delivery.state === state) {
     if (state === "pending" || Object.keys(details).length === 0)

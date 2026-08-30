@@ -6,6 +6,7 @@ import {
   type GitHubContent,
   type GitHubDeliveryPort,
   type GitHubPullRequest,
+  type GitHubRepository,
 } from "./delivery.js";
 
 const GITHUB_API_VERSION = "2026-03-10";
@@ -34,6 +35,14 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
       /\/+$/,
       "",
     );
+  }
+
+  async getRepository(input: {
+    repository: string;
+  }): Promise<GitHubRepository> {
+    assertRepository(input.repository);
+    const value = await this.#requestJson(input.repository, "GET", "");
+    return parseRepository(value);
   }
 
   async getBranch(input: {
@@ -87,15 +96,12 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     ref: string;
   }): Promise<GitHubContent | undefined> {
     assertContentCoordinates(input.repository, input.path, input.ref, true);
-    const query = new URLSearchParams({ ref: input.ref });
-    const value = await this.#requestJson(
-      input.repository,
-      "GET",
-      `/contents/${encodePath(input.path)}?${query.toString()}`,
-      { allowNotFound: true },
-    );
-    if (value === undefined) return undefined;
-    return parseContent(value, input.path);
+    const branch =
+      input.ref === "main"
+        ? await this.getBaseBranch({ repository: input.repository, base: "main" })
+        : await this.getBranch({ repository: input.repository, branch: input.ref });
+    if (!branch) return undefined;
+    return this.#readRegularBlob(input.repository, input.path, branch.sha);
   }
 
   async putContent(input: {
@@ -181,6 +187,23 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     return value.map((entry) => parsePullRequest(entry, input.head));
   }
 
+  async getPullRequest(input: {
+    repository: string;
+    pullRequestNumber: number;
+  }): Promise<GitHubPullRequest | undefined> {
+    assertRepository(input.repository);
+    assertPullRequestNumber(input.pullRequestNumber);
+    const value = await this.#requestJson(
+      input.repository,
+      "GET",
+      `/pulls/${input.pullRequestNumber}`,
+      { allowNotFound: true },
+    );
+    return value === undefined
+      ? undefined
+      : parsePullRequest(value, undefined);
+  }
+
   async listPullRequestFiles(input: {
     repository: string;
     pullRequestNumber: number;
@@ -243,6 +266,77 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
       { allowNotFound },
     );
     return value === undefined ? undefined : parseBranch(value, branch);
+  }
+
+  async #readRegularBlob(
+    repository: string,
+    path: string,
+    commitSha: string,
+  ): Promise<GitHubContent | undefined> {
+    assertCommitSha(commitSha);
+    const commit = record(
+      await this.#requestJson(
+        repository,
+        "GET",
+        `/git/commits/${encodeURIComponent(commitSha)}`,
+      ),
+    );
+    const tree = record(commit.tree);
+    invariant(
+      typeof tree.sha === "string",
+      "github_response_invalid",
+      "GitHub commit response omitted its tree SHA",
+    );
+    assertCommitSha(tree.sha);
+    const segments = path.split("/");
+    let treeSha = tree.sha;
+    for (let index = 0; index < segments.length; index += 1) {
+      const value = record(
+        await this.#requestJson(
+          repository,
+          "GET",
+          `/git/trees/${encodeURIComponent(treeSha)}`,
+        ),
+      );
+      invariant(
+        value.sha === treeSha && value.truncated === false && Array.isArray(value.tree),
+        "github_response_invalid",
+        "GitHub tree response is incomplete or invalid",
+      );
+      const entries = value.tree.map(parseTreeEntry);
+      const matches = entries.filter((entry) => entry.path === segments[index]);
+      invariant(
+        matches.length <= 1,
+        "github_response_invalid",
+        "GitHub tree response has duplicate path entries",
+      );
+      const entry = matches[0];
+      if (!entry) return undefined;
+      const terminal = index === segments.length - 1;
+      if (!terminal) {
+        invariant(
+          entry.type === "tree" && entry.mode === "040000",
+          "github_content_not_regular_file",
+          "Public delivery path traverses a non-directory Git entry",
+        );
+        treeSha = entry.sha;
+        continue;
+      }
+      invariant(
+        entry.type === "blob" && entry.mode === "100644",
+        "github_content_not_regular_file",
+        "Public delivery target must be a regular non-executable blob",
+      );
+      const blob = record(
+        await this.#requestJson(
+          repository,
+          "GET",
+          `/git/blobs/${encodeURIComponent(entry.sha)}`,
+        ),
+      );
+      return parseBlob(blob, path, entry.sha);
+    }
+    return undefined;
   }
 
   async #putContent(input: {
@@ -337,12 +431,9 @@ function parseBranch(value: unknown, expectedName: string): GitHubBranch {
   return { name: expectedName, sha: target.sha };
 }
 
-function parseContent(value: unknown, expectedPath: string): GitHubContent {
-  const object = record(value);
+function parseBlob(object: Record<string, unknown>, expectedPath: string, expectedSha: string): GitHubContent {
   invariant(
-    object.type === "file" &&
-      object.path === expectedPath &&
-      typeof object.sha === "string" &&
+    object.sha === expectedSha &&
       object.encoding === "base64" &&
       typeof object.content === "string",
     "github_response_invalid",
@@ -360,7 +451,53 @@ function parseContent(value: unknown, expectedPath: string): GitHubContent {
   return {
     path: expectedPath,
     bytes: Uint8Array.from(bytes),
-    blobSha: object.sha,
+    blobSha: expectedSha,
+    mode: "100644",
+  };
+}
+
+function parseTreeEntry(value: unknown): {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+} {
+  const object = record(value);
+  invariant(
+    typeof object.path === "string" &&
+      object.path.length > 0 &&
+      typeof object.mode === "string" &&
+      typeof object.type === "string" &&
+      typeof object.sha === "string",
+    "github_response_invalid",
+    "GitHub tree entry is invalid",
+  );
+  assertCommitSha(object.sha);
+  return {
+    path: object.path,
+    mode: object.mode,
+    type: object.type,
+    sha: object.sha,
+  };
+}
+
+function parseRepository(value: unknown): GitHubRepository {
+  const object = record(value);
+  invariant(
+    typeof object.full_name === "string" &&
+      typeof object.private === "boolean" &&
+      (object.visibility === "public" ||
+        object.visibility === "private" ||
+        object.visibility === "internal") &&
+      typeof object.default_branch === "string",
+    "github_response_invalid",
+    "GitHub repository metadata is invalid",
+  );
+  return {
+    fullName: object.full_name,
+    private: object.private,
+    visibility: object.visibility,
+    defaultBranch: object.default_branch,
   };
 }
 
@@ -374,12 +511,24 @@ function parseChangedFile(value: unknown): GitHubChangedFile {
     "github_response_invalid",
     "GitHub changed-file response is invalid",
   );
-  return { path: object.filename, status: object.status };
+  invariant(
+    object.previous_filename === undefined ||
+      typeof object.previous_filename === "string",
+    "github_response_invalid",
+    "GitHub changed-file previous filename is invalid",
+  );
+  return {
+    path: object.filename,
+    status: object.status,
+    ...(typeof object.previous_filename === "string"
+      ? { previousPath: object.previous_filename }
+      : {}),
+  };
 }
 
 function parsePullRequest(
   value: unknown,
-  expectedHead: string,
+  expectedHead: string | undefined,
 ): GitHubPullRequest {
   const object = record(value);
   const base = record(object.base);
@@ -393,7 +542,7 @@ function parsePullRequest(
       typeof object.body === "string" &&
       (object.state === "open" || object.state === "closed") &&
       base.ref === "main" &&
-      head.ref === expectedHead &&
+      (expectedHead === undefined || head.ref === expectedHead) &&
       typeof head.sha === "string" &&
       (object.merged_at === null ||
         object.merged_at === undefined ||
@@ -410,7 +559,7 @@ function parsePullRequest(
     state: object.state,
     merged: typeof object.merged_at === "string",
     base: "main",
-    head: expectedHead,
+    head: head.ref as string,
     headSha: head.sha,
   };
 }

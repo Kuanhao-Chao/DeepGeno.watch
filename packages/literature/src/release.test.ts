@@ -197,6 +197,31 @@ describe("delivery outbox states", () => {
     );
   });
 
+  it("permits only an explicitly reconciled failed receipt to reopen or merge", () => {
+    const failed = transitionDelivery(
+      createPendingDelivery(release, createdAt),
+      "failed",
+      "2026-08-28T07:01:00.000Z",
+      { remote, failure: closedFailure },
+    );
+    const reopened = transitionDelivery(
+      failed,
+      "pr-open",
+      "2026-08-28T07:02:00.000Z",
+      { remote },
+    );
+    const merged = transitionDelivery(
+      failed,
+      "merged",
+      "2026-08-28T07:03:00.000Z",
+      { remote },
+    );
+    expect(reopened).toMatchObject({ state: "pr-open", remote });
+    expect(merged).toMatchObject({ state: "merged", remote });
+    expect(reopened).not.toHaveProperty("failure");
+    expect(merged).not.toHaveProperty("failure");
+  });
+
   it("rejects remote receipt fields outside the private allowlist", () => {
     const pending = createPendingDelivery(release, createdAt);
     expect(() =>

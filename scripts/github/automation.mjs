@@ -11,6 +11,7 @@ import {
   PRIVATE_PREFIX,
   SUMMARY_LABEL,
   assertMergedByCurator,
+  assertPrivateStateCheckout,
   assertPrivateRepository,
   automationWorkingDirectory,
   branchToken,
@@ -54,7 +55,8 @@ export async function main() {
 }
 
 async function assertPrivate() {
-  assertPrivateRepository(await githubEvent());
+  const event = await githubEvent();
+  await assertBoundPrivateState(event);
   console.log("Private repository boundary confirmed.");
 }
 
@@ -67,7 +69,7 @@ async function triageCheck() {
     );
     return;
   }
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const metadata = pullRequestMetadata(event);
   const { id } = extractReviewId(metadata.body, kind);
   const bodyFile = await writePullRequestBody(
@@ -111,7 +113,7 @@ async function triageCheck() {
 
 async function ingest() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const shadow = parseBoolean(process.env.INPUT_SHADOW || "false", "shadow");
   const trigger =
     process.env.GITHUB_EVENT_NAME === "schedule"
@@ -255,7 +257,7 @@ async function recordTriage() {
 
 async function synthesize() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   validateModelEnvironment(process.env);
   const paperId = requireSafeValue(
     process.env.INPUT_PAPER_ID,
@@ -351,7 +353,7 @@ async function recordSummary() {
 
 async function publishApproved() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const draftId = requireSafeValue(
     process.env.INPUT_DRAFT_ID,
     "INPUT_DRAFT_ID",
@@ -395,7 +397,7 @@ async function publishApproved() {
 
 async function mergedReviewEvent(expectedKind) {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const kind = relevantPullRequestKind(event);
   if (kind !== expectedKind) {
     throw new Error(`Expected a merged ${expectedKind} review pull request`);
@@ -415,6 +417,13 @@ async function mergedReviewEvent(expectedKind) {
     process.env.DEEPGENO_CURATOR_GITHUB_LOGIN,
   );
   return event;
+}
+
+async function assertBoundPrivateState(event) {
+  assertPrivateRepository(event);
+  const bound = await assertPrivateStateCheckout({ roots, event });
+  roots.projectRoot = bound.projectRoot;
+  roots.stateRoot = bound.stateRoot;
 }
 
 function literature(command, args, { stateRoot = roots.stateRoot } = {}) {

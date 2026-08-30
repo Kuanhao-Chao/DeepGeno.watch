@@ -21,11 +21,20 @@ export type GitHubContent = Readonly<{
   path: string;
   bytes: Uint8Array;
   blobSha: string;
+  mode: string;
 }>;
 
 export type GitHubChangedFile = Readonly<{
   path: string;
   status: string;
+  previousPath?: string;
+}>;
+
+export type GitHubRepository = Readonly<{
+  fullName: string;
+  private: boolean;
+  visibility: "public" | "private" | "internal";
+  defaultBranch: string;
 }>;
 
 export type GitHubPullRequest = Readonly<{
@@ -46,6 +55,7 @@ export type GitHubPullRequest = Readonly<{
  * such as base64 content never cross this interface.
  */
 export interface GitHubDeliveryPort {
+  getRepository(input: { repository: string }): Promise<GitHubRepository>;
   getBranch(input: {
     repository: string;
     branch: string;
@@ -82,6 +92,10 @@ export interface GitHubDeliveryPort {
     head: string;
     state: "all";
   }): Promise<readonly GitHubPullRequest[]>;
+  getPullRequest(input: {
+    repository: string;
+    pullRequestNumber: number;
+  }): Promise<GitHubPullRequest | undefined>;
   listPullRequestFiles(input: {
     repository: string;
     pullRequestNumber: number;
@@ -261,6 +275,32 @@ export async function deliverPublicRelease(
   assertGitHubDeliveryCoordinates(coordinates);
   const publicMetadata = validatePublicMetadata(request.publicMetadata);
   const pullRequestText = publicPullRequestText(coordinates, publicMetadata);
+  const repository = await port.getRepository({
+    repository: coordinates.repository,
+  });
+  assertPublicRepository(repository, coordinates.repository);
+
+  if (request.delivery.remote) {
+    assertStoredReceipt(request.delivery.remote, coordinates);
+    const pullRequest = await port.getPullRequest({
+      repository: coordinates.repository,
+      pullRequestNumber: request.delivery.remote.pullRequestNumber,
+    });
+    invariant(
+      pullRequest,
+      "delivery_receipt_missing",
+      "Stored public delivery receipt no longer identifies a pull request",
+    );
+    assertStoredPullRequest(pullRequest, request.delivery.remote);
+    return reconcilePullRequest(
+      coordinates,
+      projection.bytes,
+      projection.sha256,
+      pullRequest,
+      pullRequestText,
+      port,
+    );
+  }
 
   let pullRequests = await port.listPullRequests({
     repository: coordinates.repository,
@@ -480,7 +520,10 @@ function assertOneChangedFile(
   expectedPath: string,
 ): void {
   invariant(
-    files.length === 1 && files[0]?.path === expectedPath,
+    files.length === 1 &&
+      files[0]?.path === expectedPath &&
+      files[0]?.status === "added" &&
+      files[0]?.previousPath === undefined,
     "delivery_file_scope_invalid",
     `Public delivery must change exactly one sealed paper path: ${expectedPath}`,
   );
@@ -540,6 +583,7 @@ function assertMatchingContent(
 ): asserts content is GitHubContent {
   invariant(
     content?.path === expectedPath &&
+      content.mode === "100644" &&
       sha256(content.bytes) === expectedSha256 &&
       Buffer.from(content.bytes).equals(Buffer.from(expectedBytes)),
     "delivery_content_conflict",
@@ -579,7 +623,7 @@ function validatePublicMetadata(metadata: {
 }): { title: string; sourceUrl: string } {
   const title = compactText(metadata.title);
   invariant(
-    title.length > 0 && title.length <= 200,
+    title.length > 0,
     "delivery_public_metadata_invalid",
     "Public delivery title is invalid",
   );
@@ -606,11 +650,63 @@ function publicPullRequestText(
   metadata: { title: string; sourceUrl: string },
 ): { title: string; body: string } {
   return {
-    title: `Literature update: ${metadata.title}`,
+    title: `Literature update: ${truncateTitle(metadata.title)}`,
     body:
       `Reviewed literature summary for ${metadata.title}.\n\n` +
       `Source: ${metadata.sourceUrl}\n` +
       `Slug: ${coordinates.slug}\n` +
       `Path: ${coordinates.path}`,
   };
+}
+
+function truncateTitle(value: string): string {
+  const prefixLength = Array.from("Literature update: ").length;
+  const limit = 256 - prefixLength;
+  const codePoints = Array.from(value);
+  return codePoints.length <= limit
+    ? value
+    : `${codePoints.slice(0, limit - 1).join("")}…`;
+}
+
+function assertPublicRepository(
+  repository: GitHubRepository,
+  expectedFullName: string,
+): void {
+  invariant(
+    repository.fullName === expectedFullName &&
+      repository.private === false &&
+      repository.visibility === "public" &&
+      repository.defaultBranch === "main",
+    "delivery_repository_untrusted",
+    "Public delivery repository metadata is not the configured public main repository",
+  );
+}
+
+function assertStoredReceipt(
+  receipt: DeliveryRemoteReceipt,
+  coordinates: GitHubDeliveryCoordinates & { base: "main" },
+): void {
+  invariant(
+    receipt.repository === coordinates.repository &&
+      receipt.branch === coordinates.branch &&
+      receipt.pullRequestUrl ===
+        `https://github.com/${coordinates.repository}/pull/${receipt.pullRequestNumber}` &&
+      isCommitSha(receipt.headSha),
+    "delivery_receipt_conflict",
+    "Stored delivery receipt does not match the configured public repository",
+  );
+}
+
+function assertStoredPullRequest(
+  pullRequest: GitHubPullRequest,
+  receipt: DeliveryRemoteReceipt,
+): void {
+  invariant(
+    pullRequest.number === receipt.pullRequestNumber &&
+      pullRequest.url === receipt.pullRequestUrl &&
+      pullRequest.head === receipt.branch &&
+      pullRequest.headSha === receipt.headSha,
+    "delivery_receipt_conflict",
+    "Stored delivery receipt no longer matches the public pull request",
+  );
 }
