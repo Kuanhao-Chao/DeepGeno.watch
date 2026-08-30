@@ -10,6 +10,12 @@ import {
 } from "./delivery.js";
 
 const GITHUB_API_VERSION = "2026-03-10";
+const CREATE_COMMIT_ON_BRANCH = `mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
+  createCommitOnBranch(input: $input) {
+    commit { oid }
+    ref { name target { oid } }
+  }
+}`;
 
 type Fetch = typeof globalThis.fetch;
 
@@ -356,102 +362,73 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     bytes: Uint8Array;
     message: string;
   }): Promise<GitHubBranch> {
-    const parent = record(
-      await this.#requestJson(
-        input.repository,
-        "GET",
-        `/git/commits/${encodeURIComponent(input.expectedHeadSha)}`,
-      ),
-    );
-    invariant(
-      parent.sha === input.expectedHeadSha,
-      "github_response_invalid",
-      "GitHub parent commit response does not identify the expected head",
-    );
-    const parentTree = record(parent.tree);
-    invariant(
-      typeof parentTree.sha === "string",
-      "github_response_invalid",
-      "GitHub parent commit response omitted its tree SHA",
-    );
-    assertCommitSha(parentTree.sha);
-    const blob = record(
-      await this.#requestJson(input.repository, "POST", "/git/blobs", {
-        body: {
-          content: Buffer.from(input.bytes).toString("base64"),
-          encoding: "base64",
-        },
-      }),
-    );
-    invariant(
-      typeof blob.sha === "string",
-      "github_response_invalid",
-      "GitHub blob write response is invalid",
-    );
-    assertCommitSha(blob.sha);
-    const tree = record(
-      await this.#requestJson(input.repository, "POST", "/git/trees", {
-        body: {
-          base_tree: parentTree.sha,
-          tree: [
-            {
-              path: input.path,
-              mode: "100644",
-              type: "blob",
-              sha: blob.sha,
-            },
-          ],
-        },
-      }),
-    );
-    invariant(
-      typeof tree.sha === "string",
-      "github_response_invalid",
-      "GitHub tree write response is invalid",
-    );
-    assertCommitSha(tree.sha);
-    const commit = record(
-      await this.#requestJson(input.repository, "POST", "/git/commits", {
-        body: {
-          message: input.message,
-          tree: tree.sha,
-          parents: [input.expectedHeadSha],
-        },
-      }),
-    );
-    invariant(
-      typeof commit.sha === "string" &&
-        record(commit.tree).sha === tree.sha &&
-        Array.isArray(commit.parents) &&
-        commit.parents.length === 1 &&
-        record(commit.parents[0]).sha === input.expectedHeadSha,
-      "github_response_invalid",
-      "GitHub commit write response is invalid",
-    );
-    assertCommitSha(commit.sha);
-    const value = await this.#requestJson(
-      input.repository,
-      "PATCH",
-      `/git/refs/${encodeRef(input.branch)}`,
-      {
-        body: {
-          sha: commit.sha,
-          force: false,
+    const value = await this.#requestGraphql({
+      query: CREATE_COMMIT_ON_BRANCH,
+      variables: {
+        input: {
+          branch: {
+            repositoryNameWithOwner: input.repository,
+            branchName: input.branch,
+          },
+          expectedHeadOid: input.expectedHeadSha,
+          message: { headline: input.message },
+          fileChanges: {
+            additions: [
+              {
+                path: input.path,
+                contents: Buffer.from(input.bytes).toString("base64"),
+              },
+            ],
+          },
         },
       },
-    );
-    const updated = parseBranch(value, input.branch);
+    });
+    return parseCreateCommitOnBranch(value, input.branch);
+  }
+
+  async #requestGraphql(body: {
+    query: string;
+    variables: unknown;
+  }): Promise<unknown> {
+    const endpoint = new URL("/graphql", this.#apiBaseUrl).toString();
+    const response = await this.#fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${this.#token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
     invariant(
-      updated.sha === commit.sha,
-      "github_response_invalid",
-      "GitHub ref update response does not identify the created commit",
+      response.ok,
+      "github_request_failed",
+      `GitHub GraphQL request failed with HTTP ${response.status}`,
     );
-    return updated;
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch (error) {
+      invariant(
+        false,
+        "github_response_invalid",
+        `GitHub GraphQL returned invalid JSON: ${error instanceof Error ? error.name : "parse error"}`,
+      );
+    }
+    const result = record(value);
+    invariant(
+      !Object.hasOwn(result, "errors") &&
+        Object.keys(result).length === 1 &&
+        Object.hasOwn(result, "data"),
+      "github_request_failed",
+      "GitHub GraphQL createCommitOnBranch returned errors or an unexpected envelope",
+    );
+    return result.data;
   }
 
   async #requestJson(
     repository: string,
-    method: "GET" | "POST" | "PUT" | "PATCH",
+    method: "GET" | "POST" | "PUT",
     path: string,
     options: { body?: unknown; allowNotFound?: boolean } = {},
   ): Promise<unknown | undefined> {
@@ -504,6 +481,43 @@ function parseBranch(value: unknown, expectedName: string): GitHubBranch {
   );
   assertCommitSha(target.sha);
   return { name: expectedName, sha: target.sha };
+}
+
+function parseCreateCommitOnBranch(
+  value: unknown,
+  expectedBranch: string,
+): GitHubBranch {
+  const data = record(value);
+  invariant(
+    Object.keys(data).length === 1 &&
+      Object.hasOwn(data, "createCommitOnBranch"),
+    "github_response_invalid",
+    "GitHub GraphQL createCommitOnBranch data is invalid",
+  );
+  const result = record(data.createCommitOnBranch);
+  invariant(
+    Object.keys(result).length === 2 &&
+      Object.hasOwn(result, "commit") &&
+      Object.hasOwn(result, "ref"),
+    "github_response_invalid",
+    "GitHub GraphQL createCommitOnBranch result is invalid",
+  );
+  const commit = record(result.commit);
+  const ref = record(result.ref);
+  const target = record(ref.target);
+  invariant(
+    Object.keys(commit).length === 1 &&
+      typeof commit.oid === "string" &&
+      Object.keys(ref).length === 2 &&
+      ref.name === `refs/heads/${expectedBranch}` &&
+      Object.keys(target).length === 1 &&
+      typeof target.oid === "string" &&
+      commit.oid === target.oid,
+    "github_response_invalid",
+    "GitHub GraphQL createCommitOnBranch commit/ref response is invalid",
+  );
+  assertGraphqlOid(commit.oid);
+  return { name: expectedBranch, sha: commit.oid };
 }
 
 function parseBlob(
@@ -739,6 +753,14 @@ function assertCommitSha(value: string): void {
     /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value),
     "github_response_invalid",
     "GitHub response contains an invalid commit SHA",
+  );
+}
+
+function assertGraphqlOid(value: string): void {
+  invariant(
+    /^[a-f0-9]{40}$/.test(value),
+    "github_response_invalid",
+    "GitHub GraphQL response contains a noncanonical commit OID",
   );
 }
 

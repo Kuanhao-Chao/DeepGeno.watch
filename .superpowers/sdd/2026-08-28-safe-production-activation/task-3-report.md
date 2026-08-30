@@ -181,3 +181,16 @@
 - `npx vitest run scripts/github/verify-public-delivery.test.ts packages/literature/src/delivery.test.ts packages/literature/src/github-rest.test.ts packages/literature/src/release.test.ts scripts/github/workflow-lib.test.ts` — 92 tests passed.
 - `npm run typecheck` — passed.
 - Final matrix: `npm test` — 15 files, 135 tests passed; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.
+
+## Fix round 4 exact-head CAS
+
+### GraphQL exact-CAS RED/GREEN
+
+- RED: a REST `PATCH /git/refs` with `force: false` checks only fast-forward ancestry; an inspected head can be reset to an ancestor and still accept a stale commit.
+- GREEN: sealed writes now use GraphQL `createCommitOnBranch` with the deterministic branch, exact `expectedHeadOid`, a nonempty headline, and one base64 addition at the sealed path. The response requires a canonical 40-hex commit OID and an agreeing exact `refs/heads/<branch>` target. GraphQL errors, null/malformed data, and commit/ref disagreement fail closed; no REST ref PATCH remains. Existing serialization, ambiguous-success reconciliation, and in-memory pre-write race coverage remain in force.
+
+### Fix round 4 focused verification
+
+- `npx vitest run packages/literature/src/github-rest.test.ts packages/literature/src/delivery.test.ts` — 36 tests passed.
+- `npm run typecheck --workspace @deepgeno/literature` — passed.
+- Final matrix: `npm test` — 15 files, 138 tests passed; focused suite 95 tests; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.

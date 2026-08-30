@@ -19,17 +19,16 @@ describe("GitHubRestDeliveryAdapter", () => {
         ref: `refs/heads/${branch}`,
         object: { type: "commit", sha: "a".repeat(40) },
       }),
-      jsonResponse({ sha: "a".repeat(40), tree: { sha: "d".repeat(40) } }),
-      jsonResponse({ sha: "e".repeat(40) }),
-      jsonResponse({ sha: "f".repeat(40) }),
       jsonResponse({
-        sha: "b".repeat(40),
-        tree: { sha: "f".repeat(40) },
-        parents: [{ sha: "a".repeat(40) }],
-      }),
-      jsonResponse({
-        ref: `refs/heads/${branch}`,
-        object: { type: "commit", sha: "b".repeat(40) },
+        data: {
+          createCommitOnBranch: {
+            commit: { oid: "b".repeat(40) },
+            ref: {
+              name: `refs/heads/${branch}`,
+              target: { oid: "b".repeat(40) },
+            },
+          },
+        },
       }),
       jsonResponse({
         ref: `refs/heads/${branch}`,
@@ -113,13 +112,14 @@ describe("GitHubRestDeliveryAdapter", () => {
       pullRequestNumber: 7,
     });
 
-    expect(requests).toHaveLength(18);
+    expect(requests).toHaveLength(14);
     for (const request of requests) {
       expect(request.headers.get("authorization")).toBe(
         "Bearer installation-token",
       );
-      expect(request.headers.get("x-github-api-version")).toBe("2026-03-10");
       expect(request.headers.get("accept")).toBe("application/vnd.github+json");
+      if (request.url.includes("/repos/"))
+        expect(request.headers.get("x-github-api-version")).toBe("2026-03-10");
     }
     expect(requests[0]!.url).toBe(
       `https://api.github.com/repos/${repository}/git/ref/heads/main`,
@@ -128,26 +128,74 @@ describe("GitHubRestDeliveryAdapter", () => {
       ref: `refs/heads/${branch}`,
       sha: "a".repeat(40),
     });
-    expect(await requests[3]!.json()).toEqual({
-      content: Buffer.from("exact sealed bytes").toString("base64"),
-      encoding: "base64",
+    expect(requests[2]!.url).toBe("https://api.github.com/graphql");
+    const graph = await requests[2]!.json();
+    expect(graph.query).toContain("createCommitOnBranch");
+    expect(graph.variables).toEqual({
+      input: {
+        branch: { repositoryNameWithOwner: repository, branchName: branch },
+        expectedHeadOid: "a".repeat(40),
+        message: { headline: `Add literature summary: ${slug}` },
+        fileChanges: {
+          additions: [
+            {
+              path: paperPath,
+              contents: Buffer.from("exact sealed bytes").toString("base64"),
+            },
+          ],
+        },
+      },
     });
-    expect(await requests[4]!.json()).toEqual({
-      base_tree: "d".repeat(40),
-      tree: [
-        { path: paperPath, mode: "100644", type: "blob", sha: "e".repeat(40) },
-      ],
-    });
-    expect(await requests[6]!.json()).toEqual({
-      sha: "b".repeat(40),
-      force: false,
-    });
-    expect(requests[15]!.url).toContain("state=all");
-    expect(requests[15]!.url).toContain(
+    expect(requests[11]!.url).toContain("state=all");
+    expect(requests[11]!.url).toContain(
       `head=${encodeURIComponent(`example:${branch}`)}`,
     );
-    expect(requests[15]!.url).toContain("base=main");
+    expect(requests[11]!.url).toContain("base=main");
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
+
+  it.each([
+    jsonResponse({ errors: [{ message: "stale expected head" }], data: null }),
+    jsonResponse({ data: null }),
+    jsonResponse({
+      data: {
+        createCommitOnBranch: {
+          commit: { oid: "b".repeat(40) },
+          ref: {
+            name: `refs/heads/${branch}`,
+            target: { oid: "c".repeat(40) },
+          },
+        },
+      },
+    }),
+  ])(
+    "rejects GraphQL stale-head errors and malformed commit/ref responses",
+    async (response) => {
+      let calls = 0;
+      const adapter = new GitHubRestDeliveryAdapter({
+        token: "installation-token",
+        fetch: async () => {
+          calls += 1;
+          return response;
+        },
+      });
+      await expect(
+        adapter.putContent({
+          repository,
+          path: paperPath,
+          branch,
+          expectedHeadSha: "a".repeat(40),
+          bytes: new TextEncoder().encode("exact sealed bytes"),
+          message: "add sealed paper",
+        }),
+      ).rejects.toMatchObject({
+        code: expect.stringMatching(
+          /^github_(request_failed|response_invalid)$/,
+        ),
+      });
+      expect(calls).toBe(1);
+    },
+  );
 
   it("serializes concurrent atomic Git-object writes", async () => {
     let activeWrites = 0;
@@ -165,23 +213,16 @@ describe("GitHubRestDeliveryAdapter", () => {
         maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
         if (requestCount === 1) await firstGate;
         activeWrites -= 1;
-        const phase = requestCount % 5;
-        if (phase === 1)
-          return jsonResponse({
-            sha: "a".repeat(40),
-            tree: { sha: "d".repeat(40) },
-          });
-        if (phase === 2) return jsonResponse({ sha: "e".repeat(40) });
-        if (phase === 3) return jsonResponse({ sha: "f".repeat(40) });
-        if (phase === 4)
-          return jsonResponse({
-            sha: "b".repeat(40),
-            tree: { sha: "f".repeat(40) },
-            parents: [{ sha: "a".repeat(40) }],
-          });
         return jsonResponse({
-          ref: `refs/heads/${branch}`,
-          object: { type: "commit", sha: "b".repeat(40) },
+          data: {
+            createCommitOnBranch: {
+              commit: { oid: "b".repeat(40) },
+              ref: {
+                name: `refs/heads/${branch}`,
+                target: { oid: "b".repeat(40) },
+              },
+            },
+          },
         });
       },
     });
@@ -209,7 +250,7 @@ describe("GitHubRestDeliveryAdapter", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(maximumActiveWrites).toBe(1);
-    expect(requestCount).toBe(10);
+    expect(requestCount).toBe(2);
   });
 
   it("refuses direct-main writes and malformed GitHub responses before trusting them", async () => {
