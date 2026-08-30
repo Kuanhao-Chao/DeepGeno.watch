@@ -19,11 +19,7 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
   readonly #apiBaseUrl: string;
   #contentsWrites: Promise<void> = Promise.resolve();
 
-  constructor(options: {
-    token: string;
-    fetch?: Fetch;
-    apiBaseUrl?: string;
-  }) {
+  constructor(options: { token: string; fetch?: Fetch; apiBaseUrl?: string }) {
     invariant(
       options.token.trim().length > 0,
       "github_token_required",
@@ -96,10 +92,18 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     ref: string;
   }): Promise<GitHubContent | undefined> {
     assertContentCoordinates(input.repository, input.path, input.ref, true);
+    if (isCommitSha(input.ref))
+      return this.#readRegularBlob(input.repository, input.path, input.ref);
     const branch =
       input.ref === "main"
-        ? await this.getBaseBranch({ repository: input.repository, base: "main" })
-        : await this.getBranch({ repository: input.repository, branch: input.ref });
+        ? await this.getBaseBranch({
+            repository: input.repository,
+            base: "main",
+          })
+        : await this.getBranch({
+            repository: input.repository,
+            branch: input.ref,
+          });
     if (!branch) return undefined;
     return this.#readRegularBlob(input.repository, input.path, branch.sha);
   }
@@ -133,7 +137,13 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     base: "main";
     head: string;
   }): Promise<readonly GitHubChangedFile[]> {
-    assertPublicationBranch(input.repository, input.head);
+    assertRepository(input.repository);
+    invariant(
+      isCommitSha(input.head) ||
+        /^deepgeno\/publish\/[a-z0-9][a-z0-9-]*$/.test(input.head),
+      "delivery_branch_invalid",
+      "Public delivery compare head must be a publication branch or immutable commit SHA",
+    );
     invariant(
       input.base === "main",
       "delivery_base_invalid",
@@ -159,10 +169,7 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     head: string;
     state: "all";
   }): Promise<readonly GitHubPullRequest[]> {
-    const { owner } = assertPublicationBranch(
-      input.repository,
-      input.head,
-    );
+    const { owner } = assertPublicationBranch(input.repository, input.head);
     invariant(
       input.base === "main" && input.state === "all",
       "delivery_pull_request_query_invalid",
@@ -199,9 +206,7 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
       `/pulls/${input.pullRequestNumber}`,
       { allowNotFound: true },
     );
-    return value === undefined
-      ? undefined
-      : parsePullRequest(value, undefined);
+    return value === undefined ? undefined : parsePullRequest(value, undefined);
   }
 
   async listPullRequestFiles(input: {
@@ -238,19 +243,14 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
       "delivery_pull_request_invalid",
       "Public delivery pull request input is invalid",
     );
-    const value = await this.#requestJson(
-      input.repository,
-      "POST",
-      "/pulls",
-      {
-        body: {
-          title: input.title,
-          body: input.body,
-          head: input.head,
-          base: input.base,
-        },
+    const value = await this.#requestJson(input.repository, "POST", "/pulls", {
+      body: {
+        title: input.title,
+        body: input.body,
+        head: input.head,
+        base: input.base,
       },
-    );
+    });
     return parsePullRequest(value, input.head);
   }
 
@@ -281,6 +281,11 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
         `/git/commits/${encodeURIComponent(commitSha)}`,
       ),
     );
+    invariant(
+      commit.sha === commitSha,
+      "github_response_invalid",
+      "GitHub commit response does not identify the requested commit",
+    );
     const tree = record(commit.tree);
     invariant(
       typeof tree.sha === "string",
@@ -299,7 +304,9 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
         ),
       );
       invariant(
-        value.sha === treeSha && value.truncated === false && Array.isArray(value.tree),
+        value.sha === treeSha &&
+          value.truncated === false &&
+          Array.isArray(value.tree),
         "github_response_invalid",
         "GitHub tree response is incomplete or invalid",
       );
@@ -431,7 +438,11 @@ function parseBranch(value: unknown, expectedName: string): GitHubBranch {
   return { name: expectedName, sha: target.sha };
 }
 
-function parseBlob(object: Record<string, unknown>, expectedPath: string, expectedSha: string): GitHubContent {
+function parseBlob(
+  object: Record<string, unknown>,
+  expectedPath: string,
+  expectedSha: string,
+): GitHubContent {
   invariant(
     object.sha === expectedSha &&
       object.encoding === "base64" &&
@@ -443,8 +454,7 @@ function parseBlob(object: Record<string, unknown>, expectedPath: string, expect
   const encoded = object.content.replace(/\s+/g, "");
   const bytes = Buffer.from(encoded, "base64");
   invariant(
-    bytes.toString("base64").replace(/=+$/, "") ===
-      encoded.replace(/=+$/, ""),
+    bytes.toString("base64").replace(/=+$/, "") === encoded.replace(/=+$/, ""),
     "github_response_invalid",
     "GitHub content response contains invalid base64",
   );
@@ -634,6 +644,18 @@ function assertContentCoordinates(
     assertRepository(repository);
     return;
   }
+  if (isCommitSha(ref)) {
+    const match = /^content\/public\/papers\/([a-z0-9][a-z0-9-]*)\.md$/.exec(
+      path,
+    );
+    invariant(
+      match?.[1],
+      "delivery_path_invalid",
+      "Public delivery path is invalid",
+    );
+    assertRepository(repository);
+    return;
+  }
   const { slug } = assertPublicationBranch(repository, ref);
   assertGitHubDeliveryCoordinates({
     repository,
@@ -650,6 +672,10 @@ function assertCommitSha(value: string): void {
     "github_response_invalid",
     "GitHub response contains an invalid commit SHA",
   );
+}
+
+function isCommitSha(value: string): boolean {
+  return /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value);
 }
 
 function assertPullRequestNumber(value: number): void {

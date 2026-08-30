@@ -158,11 +158,12 @@ export function assertGitHubDeliveryCoordinates(
     "delivery_branch_invalid",
     "Public delivery branch must be the deterministic publication branch",
   );
-  const normalizedPath = posix.normalize(coordinates.path.replaceAll("\\", "/"));
+  const normalizedPath = posix.normalize(
+    coordinates.path.replaceAll("\\", "/"),
+  );
   invariant(
     coordinates.path === normalizedPath &&
-      coordinates.path ===
-        `content/public/papers/${coordinates.slug}.md` &&
+      coordinates.path === `content/public/papers/${coordinates.slug}.md` &&
       !coordinates.path.includes("\0"),
     "delivery_path_invalid",
     "Public delivery path must match the sealed publication slug",
@@ -350,12 +351,12 @@ export async function deliverPublicRelease(
   // confined to this release before a write is allowed. Otherwise an attacker
   // (or a stale branch) could cause us to append the sealed file to an
   // out-of-scope public change and only discover that after mutation.
-  await assertExistingBranchScope(coordinates, port);
+  await assertExistingBranchScope(coordinates, remoteBranch.sha, port);
 
   const existingContent = await port.getContent({
     repository: coordinates.repository,
     path: coordinates.path,
-    ref: branch,
+    ref: remoteBranch.sha,
   });
   if (existingContent) {
     assertMatchingContent(
@@ -374,10 +375,15 @@ export async function deliverPublicRelease(
         message: `Add literature summary: ${projection.slug}`,
       });
     } catch (error) {
+      remoteBranch =
+        (await port.getBranch({
+          repository: coordinates.repository,
+          branch,
+        })) ?? remoteBranch;
       const reconciled = await port.getContent({
         repository: coordinates.repository,
         path: coordinates.path,
-        ref: branch,
+        ref: remoteBranch.sha,
       });
       if (!reconciled) throw error;
       assertMatchingContent(
@@ -386,19 +392,14 @@ export async function deliverPublicRelease(
         projection.bytes,
         projection.sha256,
       );
-      remoteBranch =
-        (await port.getBranch({
-          repository: coordinates.repository,
-          branch,
-        })) ?? remoteBranch;
     }
   }
   assertBranch(remoteBranch, branch);
-  await assertOneBranchFile(coordinates, port);
+  await assertOneBranchFile(coordinates, remoteBranch.sha, port);
   const finalContent = await port.getContent({
     repository: coordinates.repository,
     path: coordinates.path,
-    ref: branch,
+    ref: remoteBranch.sha,
   });
   assertMatchingContent(
     finalContent,
@@ -451,7 +452,11 @@ async function reconcilePullRequest(
     pullRequestNumber: pullRequest.number,
   });
   assertOneChangedFile(files, coordinates.path);
-  const remote = receipt(coordinates.repository, coordinates.branch, pullRequest);
+  const remote = receipt(
+    coordinates.repository,
+    coordinates.branch,
+    pullRequest,
+  );
 
   if (pullRequest.merged) {
     const publicContent = await port.getContent({
@@ -465,9 +470,11 @@ async function reconcilePullRequest(
       sealedBytes,
       sealedSha256,
     );
+    await assertStablePullRequest(coordinates, pullRequest, expectedText, port);
     return { state: "merged", remote };
   }
   if (pullRequest.state === "closed") {
+    await assertStablePullRequest(coordinates, pullRequest, expectedText, port);
     return {
       state: "failed",
       remote,
@@ -488,11 +495,11 @@ async function reconcilePullRequest(
     "delivery_head_conflict",
     "Public delivery pull request does not target the current publication branch head",
   );
-  await assertOneBranchFile(coordinates, port);
+  await assertOneBranchFile(coordinates, pullRequest.headSha, port);
   const branchContent = await port.getContent({
     repository: coordinates.repository,
     path: coordinates.path,
-    ref: coordinates.branch,
+    ref: pullRequest.headSha,
   });
   assertMatchingContent(
     branchContent,
@@ -500,17 +507,29 @@ async function reconcilePullRequest(
     sealedBytes,
     sealedSha256,
   );
+  await assertStablePullRequest(coordinates, pullRequest, expectedText, port);
+  const finalBranch = await port.getBranch({
+    repository: coordinates.repository,
+    branch: coordinates.branch,
+  });
+  assertBranch(finalBranch, coordinates.branch);
+  invariant(
+    finalBranch.sha === pullRequest.headSha,
+    "delivery_head_conflict",
+    "Public delivery branch moved after the pull request snapshot",
+  );
   return { state: "pr-open", remote };
 }
 
 async function assertOneBranchFile(
   coordinates: GitHubDeliveryCoordinates & { base: "main" },
+  headSha: string,
   port: GitHubDeliveryPort,
 ): Promise<void> {
   const files = await port.compare({
     repository: coordinates.repository,
     base: coordinates.base,
-    head: coordinates.branch,
+    head: headSha,
   });
   assertOneChangedFile(files, coordinates.path);
 }
@@ -593,14 +612,46 @@ function assertMatchingContent(
 
 async function assertExistingBranchScope(
   coordinates: GitHubDeliveryCoordinates & { base: "main" },
+  headSha: string,
   port: GitHubDeliveryPort,
 ): Promise<void> {
   const files = await port.compare({
     repository: coordinates.repository,
     base: coordinates.base,
-    head: coordinates.branch,
+    head: headSha,
   });
   if (files.length > 0) assertOneChangedFile(files, coordinates.path);
+}
+
+async function assertStablePullRequest(
+  coordinates: GitHubDeliveryCoordinates & { base: "main" },
+  snapshot: GitHubPullRequest,
+  expectedText: { title: string; body: string },
+  port: GitHubDeliveryPort,
+): Promise<void> {
+  const current = await port.getPullRequest({
+    repository: coordinates.repository,
+    pullRequestNumber: snapshot.number,
+  });
+  invariant(
+    current !== undefined,
+    "delivery_pull_request_metadata_invalid",
+    "Public delivery pull request disappeared during reconciliation",
+  );
+  assertPullRequest(current, coordinates, expectedText);
+  invariant(
+    current.number === snapshot.number &&
+      current.url === snapshot.url &&
+      current.base === snapshot.base &&
+      current.head === snapshot.head &&
+      current.headSha === snapshot.headSha &&
+      current.state === snapshot.state &&
+      current.merged === snapshot.merged &&
+      current.title === snapshot.title &&
+      current.body === snapshot.body,
+    "delivery_head_conflict",
+    "Public delivery pull request changed during reconciliation",
+  );
 }
 
 function receipt(

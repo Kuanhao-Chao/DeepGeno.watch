@@ -70,18 +70,13 @@ export function resolveAutomationRoots(
   const stateValue = optionalRoot(environment.DEEPGENO_STATE_ROOT);
   if (environment.GITHUB_ACTIONS === "true") {
     if (!projectValue)
-      throw new Error(
-        "DEEPGENO_PROJECT_ROOT is required in GitHub Actions",
-      );
+      throw new Error("DEEPGENO_PROJECT_ROOT is required in GitHub Actions");
     if (!stateValue)
       throw new Error("DEEPGENO_STATE_ROOT is required in GitHub Actions");
   }
   const projectRoot = resolve(cwd, projectValue ?? cwd);
   const stateRoot = resolve(cwd, stateValue ?? cwd);
-  if (
-    environment.GITHUB_ACTIONS === "true" &&
-    projectRoot === stateRoot
-  ) {
+  if (environment.GITHUB_ACTIONS === "true" && projectRoot === stateRoot) {
     throw new Error(
       "DEEPGENO_PROJECT_ROOT and DEEPGENO_STATE_ROOT must be distinct in GitHub Actions",
     );
@@ -120,35 +115,132 @@ export function automationWorkingDirectory(kind, roots) {
   throw new Error(`Unknown automation tool kind: ${String(kind)}`);
 }
 
-export async function assertPrivateStateCheckout({ roots, event, run = runGit }) {
+export async function assertPrivateStateCheckout({
+  roots,
+  event,
+  run = runGit,
+}) {
   const expectedRepository = event?.repository?.full_name;
-  if (typeof expectedRepository !== "string" || !/^[^/]+\/[^/]+$/.test(expectedRepository)) {
+  if (
+    typeof expectedRepository !== "string" ||
+    !/^[^/]+\/[^/]+$/.test(expectedRepository)
+  ) {
     throw new Error("Private GitHub event must identify repository.full_name");
   }
-  const projectRoot = await canonicalDirectory(roots.projectRoot, "project root");
+  const projectRoot = await canonicalDirectory(
+    roots.projectRoot,
+    "project root",
+  );
   const stateRoot = await canonicalDirectory(roots.stateRoot, "state root");
   if (
     projectRoot === stateRoot ||
     projectRoot.startsWith(`${stateRoot}${sep}`) ||
     stateRoot.startsWith(`${projectRoot}${sep}`)
   ) {
-    throw new Error("Project and private state roots must be distinct non-nested directories");
+    throw new Error(
+      "Project and private state roots must be distinct non-nested directories",
+    );
   }
-  const topLevel = await run("git", ["-C", stateRoot, "rev-parse", "--show-toplevel"]);
-  const checkoutRoot = await canonicalDirectory(topLevel.trim(), "private checkout root");
+  const topLevel = await run("git", [
+    "-C",
+    stateRoot,
+    "rev-parse",
+    "--show-toplevel",
+  ]);
+  const checkoutRoot = await canonicalDirectory(
+    topLevel.trim(),
+    "private checkout root",
+  );
   if (checkoutRoot !== stateRoot) {
-    throw new Error("DEEPGENO_STATE_ROOT must be the private Git checkout root");
+    throw new Error(
+      "DEEPGENO_STATE_ROOT must be the private Git checkout root",
+    );
   }
-  let origin;
-  try {
-    origin = await run("git", ["-C", stateRoot, "config", "--get", "remote.origin.url"]);
-  } catch {
-    throw new Error("Private Git checkout must define remote.origin.url");
-  }
-  if (canonicalGitHubOrigin(origin.trim()) !== expectedRepository) {
-    throw new Error("Private Git checkout origin does not match the GitHub event repository");
-  }
+  await assertPrivateStateRemote({
+    stateRoot,
+    repository: expectedRepository,
+    run,
+  });
   return { projectRoot, stateRoot, repository: expectedRepository };
+}
+
+export async function assertPrivateStateRemote({
+  stateRoot,
+  repository,
+  run = runGit,
+}) {
+  if (
+    typeof repository !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+      repository,
+    )
+  ) {
+    throw new Error("Private Git checkout repository is invalid");
+  }
+  let fetchUrls;
+  let pushUrls;
+  let configuredPushUrls;
+  try {
+    [fetchUrls, pushUrls] = await Promise.all([
+      run("git", ["-C", stateRoot, "remote", "get-url", "--all", "origin"]),
+      run("git", [
+        "-C",
+        stateRoot,
+        "remote",
+        "get-url",
+        "--push",
+        "--all",
+        "origin",
+      ]),
+    ]);
+    try {
+      configuredPushUrls = await run("git", [
+        "-C",
+        stateRoot,
+        "config",
+        "--get-all",
+        "remote.origin.pushurl",
+      ]);
+    } catch {
+      configuredPushUrls = "";
+    }
+  } catch {
+    throw new Error(
+      "Private Git checkout must define one effective origin URL for fetch and push",
+    );
+  }
+  const urls = [fetchUrls, pushUrls].map((value) =>
+    value
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean),
+  );
+  if (
+    urls.some((value) => value.length !== 1) ||
+    configuredPushUrls.trim().length > 0 ||
+    urls.flat().some((url) => canonicalGitHubOrigin(url) !== repository)
+  ) {
+    throw new Error(
+      "Private Git checkout effective origin does not match the GitHub event repository",
+    );
+  }
+}
+
+export function privateGhArguments(repository, args) {
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+      repository,
+    )
+  ) {
+    throw new Error("Private GitHub repository is invalid");
+  }
+  if (
+    !Array.isArray(args) ||
+    args.some((argument) => typeof argument !== "string")
+  ) {
+    throw new Error("GitHub CLI arguments are invalid");
+  }
+  return [...args, "--repo", repository];
 }
 
 /**
@@ -480,11 +572,21 @@ async function canonicalDirectory(value, label) {
 }
 
 function canonicalGitHubOrigin(value) {
-  const https = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(value);
-  const ssh = /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(value);
+  const https = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(
+    value,
+  );
+  const ssh =
+    /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(
+      value,
+    );
   const repository = https?.[1] ?? ssh?.[1];
-  if (!repository || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository)) {
-    throw new Error("Private Git checkout origin must be a canonical github.com owner/repository URL");
+  if (
+    !repository ||
+    !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository)
+  ) {
+    throw new Error(
+      "Private Git checkout origin must be a canonical github.com owner/repository URL",
+    );
   }
   return repository;
 }
@@ -492,7 +594,9 @@ function canonicalGitHubOrigin(value) {
 async function runGit(command, args) {
   const result = spawnSync(command, args, { encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
   }
   return result.stdout;
 }

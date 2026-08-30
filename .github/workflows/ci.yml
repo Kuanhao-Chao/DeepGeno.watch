@@ -18,6 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Validate immutable public delivery scope
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'deepgeno/publish/')
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Validate public delivery from trusted base
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'deepgeno/publish/')
+        run: node scripts/github/verify-public-delivery.mjs --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --branch "${{ github.head_ref }}"
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:

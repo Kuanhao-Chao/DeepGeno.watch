@@ -100,16 +100,16 @@
 
 ## Contract audit
 
-| Requirement | Evidence |
-|---|---|
-| Immutable exact-byte delivery | `PrivateRelease` stores base64 bytes and SHA-256; `projectionFromRelease`, REST base64 edge, and delivery tests compare raw bytes and digest. |
-| One deterministic public PR/file | Branch is `deepgeno/publish/<slug>`; coordinates, compare, PR files, and merged `main` bytes all require exactly the sealed path; direct `main` is rejected. |
-| Retry/reconciliation | Branch-create, Contents-write, and PR-create timeout-after-success paths re-read deterministic remote state; matching bytes/PR reuse, differing bytes conflict, open/merged/closed PRs reconcile to `pr-open`/`merged`/`failed`. |
-| Private outbox ordering/CAS | `publish-approved` commits private publication/release/pending delivery before build or network, then commits a changed receipt after `deliver`; `transitionDelivery` is lock-protected CAS and permits legal pending/pr-open/merged/failed transitions. |
-| Public PR text allowlist | REST response parsing and reconciliation require exact deterministic title/body; only public title/source URL/slug/path are emitted. |
-| Split-root companion automation | Literature invocations include literal project/state roots; npm/build/privacy use project root, private git/gh use state root, and Actions reject missing/non-distinct roots. |
-| Safe discovery and curation | Discovery runs in disposable private-state copy; non-shadow source issues prevent promotion/commit/Gate 1, shadow never promotes; merged Gate 1/2 events require configured curator attribution before mutation. |
-| Public workflows | `ingest.yml`, `summarize.yml`, and `triage.yml` are removed; public `ci.yml` remains. |
+| Requirement                      | Evidence                                                                                                                                                                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Immutable exact-byte delivery    | `PrivateRelease` stores base64 bytes and SHA-256; `projectionFromRelease`, REST base64 edge, and delivery tests compare raw bytes and digest.                                                                                                            |
+| One deterministic public PR/file | Branch is `deepgeno/publish/<slug>`; coordinates, compare, PR files, and merged `main` bytes all require exactly the sealed path; direct `main` is rejected.                                                                                             |
+| Retry/reconciliation             | Branch-create, Contents-write, and PR-create timeout-after-success paths re-read deterministic remote state; matching bytes/PR reuse, differing bytes conflict, open/merged/closed PRs reconcile to `pr-open`/`merged`/`failed`.                         |
+| Private outbox ordering/CAS      | `publish-approved` commits private publication/release/pending delivery before build or network, then commits a changed receipt after `deliver`; `transitionDelivery` is lock-protected CAS and permits legal pending/pr-open/merged/failed transitions. |
+| Public PR text allowlist         | REST response parsing and reconciliation require exact deterministic title/body; only public title/source URL/slug/path are emitted.                                                                                                                     |
+| Split-root companion automation  | Literature invocations include literal project/state roots; npm/build/privacy use project root, private git/gh use state root, and Actions reject missing/non-distinct roots.                                                                            |
+| Safe discovery and curation      | Discovery runs in disposable private-state copy; non-shadow source issues prevent promotion/commit/Gate 1, shadow never promotes; merged Gate 1/2 events require configured curator attribution before mutation.                                         |
+| Public workflows                 | `ingest.yml`, `summarize.yml`, and `triage.yml` are removed; public `ci.yml` remains.                                                                                                                                                                    |
 
 ## Final verification
 
@@ -143,3 +143,23 @@
 
 - `npm test` — 14 files, 106 tests passed.
 - `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, `npm run deploy:dry-run`, and `git diff --check` — passed.
+
+## Fix round 2 hardening
+
+### Receipt, destination, and Git-object identity RED/GREEN
+
+- RED: a schema-valid alternate receipt could replace a failed delivery’s recorded PR/head during recovery; private automation trusted a single fetch URL and `gh` defaults; Git commit reads did not prove the returned object was the requested SHA.
+- GREEN: direct domain and `GitFileStateStore` tests reject alternate failed receipts while same-receipt reopen/merge clears failure; real temporary Git checkout tests reject push URLs, duplicate URLs, case drift, nested/symlink roots, and wrong/missing origins; every private `gh` call uses `--repo`; state and review pushes recheck the effective destination. REST commit reads require `.sha` equal to the requested SHA, including missing/mismatched fixtures.
+
+### SHA-pinned delivery and trusted CI RED/GREEN
+
+- RED: a branch could move after a comparison performed by mutable branch name.
+- GREEN: all post-ref blob/compare reads are pinned to observed commit SHA. Reconciliation re-fetches and compares PR metadata, then requires the open branch still equal to the snapshot head. A deterministic fake race moves the branch after PR-file inspection and fails before a `pr-open` outcome.
+- A public delivery CI guard is executed from a checkout pinned to the immutable PR base SHA. For `deepgeno/publish/<slug>`, it permits exactly one added `content/public/papers/<slug>.md`; rename, modify, delete, mismatch, and extra paths fail. The stable `verify` job remains, with no `pull_request_target` or secret-bearing PR execution.
+
+### Fix round 2 verification
+
+- Focused: `npx vitest run packages/literature/src/delivery.test.ts packages/literature/src/github-rest.test.ts packages/literature/src/release.test.ts scripts/github/workflow-lib.test.ts scripts/github/verify-public-delivery.test.ts` — 77 tests passed.
+- Full: `npm test` — 15 files, 120 tests passed; `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, and `npm run deploy:dry-run` passed.
+- Initial `npm run format:check` exposed pre-existing formatting drift in planning files and `packages/literature/src/cli.ts`; those files were formatted before the final formatting recheck.
+- Final after-format verification: `npm test` — 15 files, 121 tests passed; `npm run typecheck`, `npm run build`, `npm run artifact:check`, `npm run privacy`, `npm run deploy:dry-run`, `npm run format:check`, and `git diff --check` all passed.

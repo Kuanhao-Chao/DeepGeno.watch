@@ -22,6 +22,7 @@ import {
   executeStagedDiscovery,
   extractReviewId,
   parseJsonLine,
+  privateGhArguments,
   relevantPullRequestKind,
   resolveAutomationRoots,
   resolveDiscoveryWindows,
@@ -216,9 +217,7 @@ describe("GitHub literature workflow boundaries", () => {
       cwd: "/checkout/engine",
     });
     expect(automationWorkingDirectory("npm", roots)).toBe("/checkout/engine");
-    expect(automationWorkingDirectory("build", roots)).toBe(
-      "/checkout/engine",
-    );
+    expect(automationWorkingDirectory("build", roots)).toBe("/checkout/engine");
     expect(automationWorkingDirectory("privacy", roots)).toBe(
       "/checkout/engine",
     );
@@ -253,12 +252,67 @@ describe("GitHub literature workflow boundaries", () => {
     await mkdir(projectRoot);
     await mkdir(stateRoot);
     git(stateRoot, ["init"]);
-    git(stateRoot, ["remote", "add", "origin", "https://github.com/example/private-state.git"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
     const event = { repository: { full_name: "example/private-state" } };
 
     await expect(
       assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
     ).resolves.toMatchObject({ repository: "example/private-state" });
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--push",
+      "origin",
+      "https://github.com/example/attacker.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--delete",
+      "--push",
+      "origin",
+      "https://github.com/example/attacker.git",
+    ]);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, ["remote", "remove", "origin"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/Example/private-state.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
     const nestedRoot = path.join(stateRoot, "nested");
     await mkdir(nestedRoot);
     await expect(
@@ -267,20 +321,54 @@ describe("GitHub literature workflow boundaries", () => {
         event,
       }),
     ).rejects.toThrow(/checkout root/);
-    git(stateRoot, ["remote", "set-url", "origin", "https://github.com/example/wrong.git"]);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/wrong.git",
+    ]);
     await expect(
       assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
     ).rejects.toThrow(/origin does not match/);
     git(stateRoot, ["remote", "remove", "origin"]);
     await expect(
       assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
-    ).rejects.toThrow(/remote.origin.url/);
-    git(stateRoot, ["remote", "add", "origin", "https://github.com/example/private-state.git"]);
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
     const linked = path.join(root, "linked-state");
     await symlink(stateRoot, linked);
     await expect(
-      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot: linked }, event }),
+      assertPrivateStateCheckout({
+        roots: { projectRoot, stateRoot: linked },
+        event,
+      }),
     ).rejects.toThrow(/symlink/);
+  });
+
+  it("pins every private gh invocation to the event repository", () => {
+    expect(privateGhArguments("example/private-state", ["pr", "list"])).toEqual(
+      ["pr", "list", "--repo", "example/private-state"],
+    );
+    expect(privateGhArguments("Example/private-state", ["pr", "list"])).toEqual(
+      ["pr", "list", "--repo", "Example/private-state"],
+    );
+  });
+
+  it("rechecks the private destination before state and review pushes", async () => {
+    const source = await readFile(
+      new URL("./automation.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /await assertPrivateStateRemote\(\{\s*stateRoot: roots\.stateRoot,/,
+    );
+    expect(source).toMatch(/privateGh\(\[\s*"pr",\s*"list"/);
+    expect(source).toMatch(/privateGh\(\[\s*"label",\s*"create"/);
   });
 
   it("runs shadow discovery in a disposable copy without mutating or accepting real state", async () => {
@@ -376,7 +464,10 @@ describe("GitHub literature workflow boundaries", () => {
   });
 
   it("keeps public CI while removing all public operational workflows", async () => {
-    const workflowRoot = path.resolve(import.meta.dirname, "../../.github/workflows");
+    const workflowRoot = path.resolve(
+      import.meta.dirname,
+      "../../.github/workflows",
+    );
     expect((await readdir(workflowRoot)).sort()).toEqual(["ci.yml"]);
   });
 
@@ -467,6 +558,8 @@ async function writePrivateMutation(
 function git(cwd: string, args: string[]): void {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (result.status !== 0) {
-    throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`);
+    throw new Error(
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
   }
 }

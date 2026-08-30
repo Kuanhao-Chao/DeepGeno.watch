@@ -27,7 +27,7 @@ describe("GitHubRestDeliveryAdapter", () => {
         ref: `refs/heads/${branch}`,
         object: { type: "commit", sha: "b".repeat(40) },
       }),
-      jsonResponse({ tree: { sha: "d".repeat(40) } }),
+      jsonResponse({ sha: "b".repeat(40), tree: { sha: "d".repeat(40) } }),
       treeResponse("d", "content", "a", "tree", "040000"),
       treeResponse("a", "public", "b", "tree", "040000"),
       treeResponse("b", "papers", "c", "tree", "040000"),
@@ -110,9 +110,7 @@ describe("GitHubRestDeliveryAdapter", () => {
         "Bearer installation-token",
       );
       expect(request.headers.get("x-github-api-version")).toBe("2026-03-10");
-      expect(request.headers.get("accept")).toBe(
-        "application/vnd.github+json",
-      );
+      expect(request.headers.get("accept")).toBe("application/vnd.github+json");
     }
     expect(requests[0]!.url).toBe(
       `https://api.github.com/repos/${repository}/git/ref/heads/main`,
@@ -223,20 +221,42 @@ describe("GitHubRestDeliveryAdapter", () => {
   });
 
   it.each([
+    { tree: { sha: "d".repeat(40) } },
+    { sha: "c".repeat(40), tree: { sha: "d".repeat(40) } },
+  ])(
+    "requires Git commit reads to identify the requested commit exactly",
+    async (commit) => {
+      const responses = gitReadResponses("blob", "100644");
+      responses[1] = jsonResponse(commit);
+      const adapter = new GitHubRestDeliveryAdapter({
+        token: "installation-token",
+        fetch: async () => responses.shift() ?? jsonResponse({}),
+      });
+
+      await expect(
+        adapter.getContent({ repository, path: paperPath, ref: branch }),
+      ).rejects.toMatchObject({ code: "github_response_invalid" });
+    },
+  );
+
+  it.each([
     ["symlink", "blob", "120000"],
     ["executable", "blob", "100755"],
     ["submodule", "commit", "160000"],
-  ])("refuses a %s entry even when it names the sealed path", async (_name, type, mode) => {
-    const responses = gitReadResponses(type, mode);
-    const adapter = new GitHubRestDeliveryAdapter({
-      token: "installation-token",
-      fetch: async () => responses.shift() ?? jsonResponse({}),
-    });
+  ])(
+    "refuses a %s entry even when it names the sealed path",
+    async (_name, type, mode) => {
+      const responses = gitReadResponses(type, mode);
+      const adapter = new GitHubRestDeliveryAdapter({
+        token: "installation-token",
+        fetch: async () => responses.shift() ?? jsonResponse({}),
+      });
 
-    await expect(
-      adapter.getContent({ repository, path: paperPath, ref: branch }),
-    ).rejects.toMatchObject({ code: "github_content_not_regular_file" });
-  });
+      await expect(
+        adapter.getContent({ repository, path: paperPath, ref: branch }),
+      ).rejects.toMatchObject({ code: "github_content_not_regular_file" });
+    },
+  );
 
   it("returns missing tree entries as absent and rejects malformed target entries", async () => {
     const missing = gitReadResponses("blob", "100644");
@@ -324,7 +344,7 @@ function gitReadResponses(type: string, mode: string): Response[] {
       ref: `refs/heads/${branch}`,
       object: { type: "commit", sha: "b".repeat(40) },
     }),
-    jsonResponse({ tree: { sha: "d".repeat(40) } }),
+    jsonResponse({ sha: "b".repeat(40), tree: { sha: "d".repeat(40) } }),
     treeResponse("d", "content", "a", "tree", "040000"),
     treeResponse("a", "public", "b", "tree", "040000"),
     treeResponse("b", "papers", "c", "tree", "040000"),

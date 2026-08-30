@@ -11,6 +11,7 @@ import {
   PRIVATE_PREFIX,
   SUMMARY_LABEL,
   assertMergedByCurator,
+  assertPrivateStateRemote,
   assertPrivateStateCheckout,
   assertPrivateRepository,
   automationWorkingDirectory,
@@ -20,6 +21,7 @@ import {
   executeStagedDiscovery,
   extractReviewId,
   parseJsonLine,
+  privateGhArguments,
   pullRequestMetadata,
   readEvent,
   relevantPullRequestKind,
@@ -137,14 +139,7 @@ async function ingest() {
       for (const window of windows) {
         const result = literature(
           "discover",
-          [
-            "--from",
-            window.from,
-            "--to",
-            window.through,
-            "--trigger",
-            trigger,
-          ],
+          ["--from", window.from, "--to", window.through, "--trigger", trigger],
           { stateRoot: stagedStateRoot },
         );
         const candidateCount = requireNonNegativeInteger(
@@ -191,7 +186,7 @@ async function ingest() {
             .filter((changedPath) => !reviewPaths.has(changedPath)),
         ),
       ];
-      commitAndPush(
+      await commitAndPush(
         statePaths,
         `chore(literature): record discovery ${windows[0]?.from} through ${windows.at(-1)?.through}`,
       );
@@ -243,7 +238,7 @@ async function recordTriage() {
     selected,
     process.env.DEEPGENO_MAX_SUMMARIES_PER_RUN,
   );
-  commitAndPush(
+  await commitAndPush(
     changedPaths,
     `chore(literature): record triage ${result.decisionBatchId}`,
   );
@@ -277,7 +272,7 @@ async function synthesize() {
     PRIVATE_PREFIX,
   ]);
   const statePaths = changedPaths.filter((path) => path !== reviewPath);
-  commitAndPush(
+  await commitAndPush(
     statePaths,
     `chore(literature): record draft ${result.draftId}`,
   );
@@ -341,7 +336,7 @@ async function recordSummary() {
   const changedPaths = validateChangedPaths(decision.changedPaths, [
     PRIVATE_PREFIX,
   ]);
-  commitAndPush(
+  await commitAndPush(
     changedPaths,
     `chore(literature): record summary decision ${draftId}`,
   );
@@ -366,7 +361,7 @@ async function publishApproved() {
       const changedPaths = validateChangedPaths(publication.changedPaths, [
         PRIVATE_PREFIX,
       ]);
-      commitAndPush(
+      await commitAndPush(
         [...new Set(changedPaths)],
         `feat(literature): seal approved summary ${draftId}`,
       );
@@ -384,15 +379,13 @@ async function publishApproved() {
       const deliveryPaths = validateChangedPaths(result.changedPaths, [
         PRIVATE_PREFIX,
       ]);
-      commitAndPush(
+      await commitAndPush(
         deliveryPaths,
         `chore(literature): record public delivery ${result.slug}`,
       );
     },
   });
-  console.log(
-    `Public delivery ${delivery.state}: ${delivery.pullRequestUrl}`,
-  );
+  console.log(`Public delivery ${delivery.state}: ${delivery.pullRequestUrl}`);
 }
 
 async function mergedReviewEvent(expectedKind) {
@@ -412,10 +405,7 @@ async function mergedReviewEvent(expectedKind) {
   ) {
     throw new Error("Pull request is not a complete merged event");
   }
-  assertMergedByCurator(
-    event,
-    process.env.DEEPGENO_CURATOR_GITHUB_LOGIN,
-  );
+  assertMergedByCurator(event, process.env.DEEPGENO_CURATOR_GITHUB_LOGIN);
   return event;
 }
 
@@ -424,6 +414,7 @@ async function assertBoundPrivateState(event) {
   const bound = await assertPrivateStateCheckout({ roots, event });
   roots.projectRoot = bound.projectRoot;
   roots.stateRoot = bound.stateRoot;
+  roots.repository = bound.repository;
 }
 
 function literature(command, args, { stateRoot = roots.stateRoot } = {}) {
@@ -438,11 +429,15 @@ function literature(command, args, { stateRoot = roots.stateRoot } = {}) {
 function configureGit() {
   const cwd = automationWorkingDirectory("git", roots);
   run("git", ["config", "user.name", "deepgeno-watch[bot]"], { cwd });
-  run("git", [
-    "config",
-    "user.email",
-    "41898282+github-actions[bot]@users.noreply.github.com",
-  ], { cwd });
+  run(
+    "git",
+    [
+      "config",
+      "user.email",
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    ],
+    { cwd },
+  );
 }
 
 function switchToMain() {
@@ -451,7 +446,7 @@ function switchToMain() {
   });
 }
 
-function commitAndPush(paths, message) {
+async function commitAndPush(paths, message) {
   if (paths.length === 0) return false;
   const cwd = automationWorkingDirectory("git", roots);
   for (const path of paths) run("git", ["add", "--", path], { cwd });
@@ -462,6 +457,10 @@ function commitAndPush(paths, message) {
   if (staged.status !== 1)
     throw commandError("git diff --cached --quiet", staged);
   run("git", ["commit", "-m", message], { cwd });
+  await assertPrivateStateRemote({
+    stateRoot: roots.stateRoot,
+    repository: roots.repository,
+  });
   run("git", ["push", "origin", "HEAD:main"], { cwd });
   return true;
 }
@@ -478,7 +477,7 @@ async function openReviewPullRequest({
   const existing = JSON.parse(
     run(
       "gh",
-      [
+      privateGh([
         "pr",
         "list",
         "--state",
@@ -487,14 +486,14 @@ async function openReviewPullRequest({
         branch,
         "--json",
         "number,state,url,mergedAt",
-      ],
+      ]),
       { cwd: automationWorkingDirectory("gh", roots), capture: true },
     ) || "[]",
   );
   if (existing.length > 0) {
     const pullRequest = existing[0];
     if (pullRequest.state === "CLOSED" && !pullRequest.mergedAt) {
-      run("gh", ["pr", "reopen", String(pullRequest.number)], {
+      run("gh", privateGh(["pr", "reopen", String(pullRequest.number)]), {
         cwd: automationWorkingDirectory("gh", roots),
       });
       console.log(
@@ -525,24 +524,32 @@ async function openReviewPullRequest({
     run("git", ["switch", "-c", branch], { cwd: gitCwd });
     run("git", ["add", "--", reviewPath], { cwd: gitCwd });
     run("git", ["commit", "-m", commitMessage], { cwd: gitCwd });
+    await assertPrivateStateRemote({
+      stateRoot: roots.stateRoot,
+      repository: roots.repository,
+    });
     run("git", ["push", "--set-upstream", "origin", branch], {
       cwd: gitCwd,
     });
   }
 
-  run("gh", [
-    "label",
-    "create",
-    label,
-    "--description",
-    labelDescription,
-    "--color",
-    labelColor,
-    "--force",
-  ], { cwd: automationWorkingDirectory("gh", roots) });
+  run(
+    "gh",
+    privateGh([
+      "label",
+      "create",
+      label,
+      "--description",
+      labelDescription,
+      "--color",
+      labelColor,
+      "--force",
+    ]),
+    { cwd: automationWorkingDirectory("gh", roots) },
+  );
   const url = run(
     "gh",
-    [
+    privateGh([
       "pr",
       "create",
       "--base",
@@ -555,12 +562,16 @@ async function openReviewPullRequest({
       reviewPath,
       "--label",
       label,
-    ],
+    ]),
     { cwd: automationWorkingDirectory("gh", roots), capture: true },
   ).trim();
   console.log(`Opened ${url}`);
   switchToMain();
   return url;
+}
+
+function privateGh(args) {
+  return privateGhArguments(roots.repository, args);
 }
 
 function run(command, args, { cwd, capture = false }) {

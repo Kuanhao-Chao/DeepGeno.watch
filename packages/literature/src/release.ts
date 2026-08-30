@@ -159,6 +159,17 @@ export function transitionDelivery(
     "delivery_transition_invalid",
     `Cannot transition delivery from ${delivery.state} to ${state}`,
   );
+  if (
+    delivery.state === "failed" &&
+    (state === "pr-open" || state === "merged")
+  ) {
+    invariant(
+      details.remote !== undefined &&
+        stableJson(details.remote) === stableJson(delivery.remote),
+      "delivery_receipt_conflict",
+      `Delivery ${delivery.id} cannot replace its failed public receipt`,
+    );
+  }
   return deliveryWithTransition(delivery, state, updatedAt, details);
 }
 
@@ -179,7 +190,7 @@ export function validateDelivery(delivery: Delivery): void {
   ]);
   invariant(
     Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
-    candidate.schemaVersion === "1.0" &&
+      candidate.schemaVersion === "1.0" &&
       typeof candidate.id === "string" &&
       /^delivery-release-[a-z0-9][a-z0-9-]*$/.test(candidate.id) &&
       typeof candidate.releaseId === "string" &&
@@ -315,8 +326,7 @@ function deliveryWithTransition(
   delete next.failure;
   if (state !== "pending") {
     if (details.remote) next.remote = Object.freeze({ ...details.remote });
-    if (details.failure)
-      next.failure = Object.freeze({ ...details.failure });
+    if (details.failure) next.failure = Object.freeze({ ...details.failure });
   }
   const frozen = Object.freeze(next);
   validateDelivery(frozen);

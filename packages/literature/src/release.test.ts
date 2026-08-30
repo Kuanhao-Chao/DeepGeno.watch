@@ -25,8 +25,7 @@ const remote = Object.freeze({
   branch: "deepgeno/publish/sealed-paper-a1b2c3d",
   headSha: "b".repeat(40),
   pullRequestNumber: 7,
-  pullRequestUrl:
-    "https://github.com/example/deepgeno-watch/pull/7",
+  pullRequestUrl: "https://github.com/example/deepgeno-watch/pull/7",
 });
 const closedFailure = Object.freeze({
   code: "pull-request-closed" as const,
@@ -222,6 +221,27 @@ describe("delivery outbox states", () => {
     expect(merged).not.toHaveProperty("failure");
   });
 
+  it("rejects changing a failed delivery's stored public receipt during reconciliation", () => {
+    const failed = transitionDelivery(
+      createPendingDelivery(release, createdAt),
+      "failed",
+      "2026-08-28T07:01:00.000Z",
+      { remote, failure: closedFailure },
+    );
+
+    expect(() =>
+      transitionDelivery(failed, "pr-open", "2026-08-28T07:02:00.000Z", {
+        remote: {
+          ...remote,
+          pullRequestNumber: 8,
+          pullRequestUrl: "https://github.com/example/deepgeno-watch/pull/8",
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "delivery_receipt_conflict" }),
+    );
+  });
+
   it("rejects remote receipt fields outside the private allowlist", () => {
     const pending = createPendingDelivery(release, createdAt);
     expect(() =>
@@ -271,6 +291,39 @@ describe("delivery outbox states", () => {
         "2026-08-28T07:02:00.000Z",
       ),
     ).rejects.toMatchObject({ code: "delivery_transition_invalid" });
+  });
+
+  it("preserves a failed receipt when the state store reconciles it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
+    roots.push(root);
+    const store = new GitFileStateStore(root);
+    const failed = transitionDelivery(
+      createPendingDelivery(release, createdAt),
+      "failed",
+      "2026-08-28T07:01:00.000Z",
+      { remote, failure: closedFailure },
+    );
+    await store.saveDelivery(failed);
+
+    await expect(
+      store.transitionDelivery(
+        release,
+        "failed",
+        "pr-open",
+        "2026-08-28T07:02:00.000Z",
+        { remote: { ...remote, headSha: "c".repeat(40) } },
+      ),
+    ).rejects.toMatchObject({ code: "delivery_receipt_conflict" });
+
+    await expect(
+      store.transitionDelivery(
+        release,
+        "failed",
+        "merged",
+        "2026-08-28T07:03:00.000Z",
+        { remote },
+      ),
+    ).resolves.toMatchObject({ delivery: { state: "merged", remote } });
   });
 
   it("treats concurrent recording of the same remote outcome as an idempotent CAS", async () => {

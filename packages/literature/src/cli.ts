@@ -259,9 +259,10 @@ const PRIVATE_STATE_COMMANDS = new Set([
   "project",
 ]);
 
-export function resolvePublicDeliveryConfig(
-  environment: NodeJS.ProcessEnv,
-): { repository: string; token: string } {
+export function resolvePublicDeliveryConfig(environment: NodeJS.ProcessEnv): {
+  repository: string;
+  token: string;
+} {
   const repository = environment.DEEPGENO_PUBLIC_REPOSITORY?.trim();
   invariant(
     repository,
