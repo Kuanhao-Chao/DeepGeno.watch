@@ -24,8 +24,10 @@ describe("GitHubRestDeliveryAdapter", () => {
           createCommitOnBranch: {
             commit: { oid: "b".repeat(40) },
             ref: {
-              name: `refs/heads/${branch}`,
-              target: { oid: "b".repeat(40) },
+              prefix: "refs/heads/",
+              name: branch,
+              repository: { nameWithOwner: repository },
+              target: { __typename: "Commit", oid: "b".repeat(40) },
             },
           },
         },
@@ -162,8 +164,10 @@ describe("GitHubRestDeliveryAdapter", () => {
         createCommitOnBranch: {
           commit: { oid: "b".repeat(40) },
           ref: {
-            name: `refs/heads/${branch}`,
-            target: { oid: "c".repeat(40) },
+            prefix: "refs/heads/",
+            name: branch,
+            repository: { nameWithOwner: repository },
+            target: { __typename: "Commit", oid: "c".repeat(40) },
           },
         },
       },
@@ -197,6 +201,128 @@ describe("GitHubRestDeliveryAdapter", () => {
     },
   );
 
+  it.each([
+    { prefix: "refs/tags/" },
+    { name: "other-branch" },
+    { repository: { nameWithOwner: "attacker/repo" } },
+    { target: { __typename: "Blob", oid: "b".repeat(40) } },
+    { target: { __typename: "Commit", oid: "B".repeat(40) } },
+    { target: { __typename: "Commit" } },
+  ])("rejects malformed GraphQL Ref identity %#", async (change) => {
+    const adapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async () => graphCommitResponse("b".repeat(40), change),
+    });
+    await expect(
+      adapter.putContent({
+        repository,
+        path: paperPath,
+        branch,
+        expectedHeadSha: "a".repeat(40),
+        bytes: new Uint8Array(),
+        message: "add sealed paper",
+      }),
+    ).rejects.toMatchObject({ code: "github_response_invalid" });
+  });
+
+  it("derives same-origin GraphQL endpoints without dropping a GHES API prefix", async () => {
+    const urls: string[] = [];
+    for (const [apiBaseUrl, expected] of [
+      ["https://api.github.com", "https://api.github.com/graphql"],
+      ["https://ghe.example/api/v3/", "https://ghe.example/api/graphql"],
+      ["https://test.example", "https://test.example/graphql"],
+    ] as const) {
+      const adapter = new GitHubRestDeliveryAdapter({
+        token: "installation-token",
+        apiBaseUrl,
+        fetch: async (input) => {
+          urls.push(String(input));
+          return jsonResponse({ errors: [{ message: "stale" }] });
+        },
+      });
+      await expect(
+        adapter.putContent({
+          repository,
+          path: paperPath,
+          branch,
+          expectedHeadSha: "a".repeat(40),
+          bytes: new Uint8Array(),
+          message: "add sealed paper",
+        }),
+      ).rejects.toMatchObject({ code: "github_request_failed" });
+      expect(urls.pop()).toBe(expected);
+    }
+    expect(
+      () =>
+        new GitHubRestDeliveryAdapter({
+          token: "installation-token",
+          apiBaseUrl: "https://ghe.example/custom/rest",
+        }),
+    ).toThrow(/GraphQL endpoint/);
+    expect(
+      () =>
+        new GitHubRestDeliveryAdapter({
+          token: "installation-token",
+          apiBaseUrl: "https://ghe.example/api/v3",
+          graphqlApiUrl: "https://attacker.example/graphql",
+        }),
+    ).toThrow(/same origin/);
+  });
+
+  it("uses GraphQL expectedHeadOid as a stateful equality CAS", async () => {
+    let currentHead = "a".repeat(40);
+    let resetToAncestor = true;
+    let successfulCommits = 0;
+    const requests: Request[] = [];
+    const adapter = new GitHubRestDeliveryAdapter({
+      token: "installation-token",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        const variables = (await request.json()) as {
+          variables: { input: { expectedHeadOid: string } };
+        };
+        if (resetToAncestor) {
+          resetToAncestor = false;
+          currentHead = "p".repeat(40);
+        }
+        if (variables.variables.input.expectedHeadOid !== currentHead)
+          return jsonResponse({ errors: [{ message: "stale expected head" }] });
+        currentHead = "b".repeat(40);
+        successfulCommits += 1;
+        return graphCommitResponse(currentHead);
+      },
+    });
+    const input = {
+      repository,
+      path: paperPath,
+      branch,
+      expectedHeadSha: "a".repeat(40),
+      bytes: new TextEncoder().encode("exact sealed bytes"),
+      message: "add sealed paper",
+    };
+    await expect(adapter.putContent(input)).rejects.toMatchObject({
+      code: "github_request_failed",
+    });
+    expect(currentHead).toBe("p".repeat(40));
+    expect(successfulCommits).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.method).toBe("POST");
+    expect(requests[0]!.url).toBe("https://api.github.com/graphql");
+
+    resetToAncestor = false;
+    currentHead = "a".repeat(40);
+    const [first, second] = await Promise.allSettled([
+      adapter.putContent(input),
+      adapter.putContent(input),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("rejected");
+    expect(currentHead).toBe("b".repeat(40));
+    expect(successfulCommits).toBe(1);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
   it("serializes concurrent atomic Git-object writes", async () => {
     let activeWrites = 0;
     let maximumActiveWrites = 0;
@@ -218,8 +344,10 @@ describe("GitHubRestDeliveryAdapter", () => {
             createCommitOnBranch: {
               commit: { oid: "b".repeat(40) },
               ref: {
-                name: `refs/heads/${branch}`,
-                target: { oid: "b".repeat(40) },
+                prefix: "refs/heads/",
+                name: branch,
+                repository: { nameWithOwner: repository },
+                target: { __typename: "Commit", oid: "b".repeat(40) },
               },
             },
           },
@@ -390,6 +518,27 @@ function jsonResponse(value: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(value), {
     status: init.status ?? 200,
     headers: { "content-type": "application/json", ...init.headers },
+  });
+}
+
+function graphCommitResponse(
+  oid: string,
+  change: Record<string, unknown> = {},
+): Response {
+  const ref = {
+    prefix: "refs/heads/",
+    name: branch,
+    repository: { nameWithOwner: repository },
+    target: { __typename: "Commit", oid },
+    ...change,
+  };
+  return jsonResponse({
+    data: {
+      createCommitOnBranch: {
+        commit: { oid },
+        ref,
+      },
+    },
   });
 }
 

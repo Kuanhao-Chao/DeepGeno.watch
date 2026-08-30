@@ -13,7 +13,12 @@ const GITHUB_API_VERSION = "2026-03-10";
 const CREATE_COMMIT_ON_BRANCH = `mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
   createCommitOnBranch(input: $input) {
     commit { oid }
-    ref { name target { oid } }
+    ref {
+      prefix
+      name
+      repository { nameWithOwner }
+      target { __typename ... on Commit { oid } }
+    }
   }
 }`;
 
@@ -23,9 +28,15 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
   readonly #token: string;
   readonly #fetch: Fetch;
   readonly #apiBaseUrl: string;
+  readonly #graphqlApiUrl: string;
   #contentsWrites: Promise<void> = Promise.resolve();
 
-  constructor(options: { token: string; fetch?: Fetch; apiBaseUrl?: string }) {
+  constructor(options: {
+    token: string;
+    fetch?: Fetch;
+    apiBaseUrl?: string;
+    graphqlApiUrl?: string;
+  }) {
     invariant(
       options.token.trim().length > 0,
       "github_token_required",
@@ -33,10 +44,12 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
     );
     this.#token = options.token;
     this.#fetch = options.fetch ?? globalThis.fetch;
-    this.#apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(
-      /\/+$/,
-      "",
+    const endpoints = resolveApiEndpoints(
+      options.apiBaseUrl ?? "https://api.github.com",
+      options.graphqlApiUrl,
     );
+    this.#apiBaseUrl = endpoints.rest;
+    this.#graphqlApiUrl = endpoints.graphql;
   }
 
   async getRepository(input: {
@@ -383,15 +396,14 @@ export class GitHubRestDeliveryAdapter implements GitHubDeliveryPort {
         },
       },
     });
-    return parseCreateCommitOnBranch(value, input.branch);
+    return parseCreateCommitOnBranch(value, input.branch, input.repository);
   }
 
   async #requestGraphql(body: {
     query: string;
     variables: unknown;
   }): Promise<unknown> {
-    const endpoint = new URL("/graphql", this.#apiBaseUrl).toString();
-    const response = await this.#fetch(endpoint, {
+    const response = await this.#fetch(this.#graphqlApiUrl, {
       method: "POST",
       headers: {
         Accept: "application/vnd.github+json",
@@ -486,6 +498,7 @@ function parseBranch(value: unknown, expectedName: string): GitHubBranch {
 function parseCreateCommitOnBranch(
   value: unknown,
   expectedBranch: string,
+  expectedRepository: string,
 ): GitHubBranch {
   const data = record(value);
   invariant(
@@ -504,13 +517,18 @@ function parseCreateCommitOnBranch(
   );
   const commit = record(result.commit);
   const ref = record(result.ref);
+  const repository = record(ref.repository);
   const target = record(ref.target);
   invariant(
     Object.keys(commit).length === 1 &&
       typeof commit.oid === "string" &&
-      Object.keys(ref).length === 2 &&
-      ref.name === `refs/heads/${expectedBranch}` &&
-      Object.keys(target).length === 1 &&
+      Object.keys(ref).length === 4 &&
+      ref.prefix === "refs/heads/" &&
+      ref.name === expectedBranch &&
+      Object.keys(repository).length === 1 &&
+      repository.nameWithOwner === expectedRepository &&
+      Object.keys(target).length === 2 &&
+      target.__typename === "Commit" &&
       typeof target.oid === "string" &&
       commit.oid === target.oid,
     "github_response_invalid",
@@ -518,6 +536,68 @@ function parseCreateCommitOnBranch(
   );
   assertGraphqlOid(commit.oid);
   return { name: expectedBranch, sha: commit.oid };
+}
+
+function resolveApiEndpoints(
+  apiBaseUrl: string,
+  graphqlApiUrl: string | undefined,
+): { rest: string; graphql: string } {
+  let restUrl: URL;
+  try {
+    restUrl = new URL(apiBaseUrl);
+  } catch {
+    invariant(
+      false,
+      "github_endpoint_invalid",
+      "GitHub REST API endpoint is invalid",
+    );
+  }
+  invariant(
+    restUrl.protocol === "https:" &&
+      !restUrl.username &&
+      !restUrl.password &&
+      !restUrl.search &&
+      !restUrl.hash,
+    "github_endpoint_invalid",
+    "GitHub REST API endpoint must be a credential-free HTTPS URL",
+  );
+  const restPath = restUrl.pathname.replace(/\/+$/, "");
+  const rest = `${restUrl.origin}${restPath}`;
+  let graphql: string;
+  if (graphqlApiUrl) {
+    let supplied: URL;
+    try {
+      supplied = new URL(graphqlApiUrl);
+    } catch {
+      invariant(
+        false,
+        "github_endpoint_invalid",
+        "GitHub GraphQL endpoint is invalid",
+      );
+    }
+    invariant(
+      supplied.protocol === "https:" &&
+        supplied.origin === restUrl.origin &&
+        !supplied.username &&
+        !supplied.password &&
+        !supplied.search &&
+        !supplied.hash,
+      "github_endpoint_invalid",
+      "GitHub GraphQL endpoint must use the same origin as the REST API",
+    );
+    graphql = supplied.toString().replace(/\/+$/, "");
+  } else if (restPath === "" || restPath === "/") {
+    graphql = `${restUrl.origin}/graphql`;
+  } else if (restPath === "/api/v3") {
+    graphql = `${restUrl.origin}/api/graphql`;
+  } else {
+    invariant(
+      false,
+      "github_endpoint_invalid",
+      "GitHub GraphQL endpoint must be explicitly configured for this REST API prefix",
+    );
+  }
+  return { rest, graphql };
 }
 
 function parseBlob(

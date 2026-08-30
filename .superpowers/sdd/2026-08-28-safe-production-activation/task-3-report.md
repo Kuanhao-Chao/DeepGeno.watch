@@ -180,6 +180,7 @@
 
 - `npx vitest run scripts/github/verify-public-delivery.test.ts packages/literature/src/delivery.test.ts packages/literature/src/github-rest.test.ts packages/literature/src/release.test.ts scripts/github/workflow-lib.test.ts` — 92 tests passed.
 - `npm run typecheck` — passed.
+- Final matrix: focused 103 tests and `npm test` 146 tests passed; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.
 - Final matrix: `npm test` — 15 files, 135 tests passed; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.
 
 ## Fix round 4 exact-head CAS
@@ -194,3 +195,20 @@
 - `npx vitest run packages/literature/src/github-rest.test.ts packages/literature/src/delivery.test.ts` — 36 tests passed.
 - `npm run typecheck --workspace @deepgeno/literature` — passed.
 - Final matrix: `npm test` — 15 files, 138 tests passed; focused suite 95 tests; typecheck, build, artifact check, privacy, deploy dry-run, format check, and diff check passed.
+
+## Fix round 5 GraphQL contract finalization
+
+### Ref shape and endpoint RED/GREEN
+
+- RED: the parser treated GraphQL `Ref.name` as `refs/heads/<branch>` and endpoint derivation dropped the `/api` prefix for a GHES REST base.
+- GREEN: the mutation selects and verifies `ref.prefix`, unqualified `ref.name`, `ref.repository.nameWithOwner`, and a `Commit` target typename/OID agreeing with `commit.oid`. Missing, malformed, cross-repository, wrong-prefix/name/type, and noncanonical OID responses fail closed. Endpoint derivation keeps default/root `/graphql`, maps `/api/v3` to `/api/graphql`, rejects ambiguous REST prefixes unless a same-origin explicit GraphQL endpoint is supplied, and never sends the token to another origin.
+
+### Stateful expected-head proof RED/GREEN
+
+- RED: canned error fixtures did not prove the production request depended on serialized `expectedHeadOid`.
+- GREEN: a stateful HTTP fake reads the mutation variables, models an ancestor reset immediately before mutation, and rejects stale expected heads without advancing the branch. Concurrent same-head requests yield exactly one commit advance and one stale failure. The test also asserts no REST ref PATCH occurs.
+
+### Fix round 5 focused verification
+
+- `npx vitest run packages/literature/src/github-rest.test.ts packages/literature/src/delivery.test.ts packages/literature/src/release.test.ts scripts/github/workflow-lib.test.ts scripts/github/verify-public-delivery.test.ts` — 103 tests passed.
+- `npm run typecheck` — passed.
