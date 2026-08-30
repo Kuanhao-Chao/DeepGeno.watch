@@ -1,0 +1,48 @@
+name: Literature review validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: literature-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate review choices from trusted private main
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'literature-inbox') ||
+      contains(github.event.pull_request.labels.*.name, 'summary-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
+      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+    steps:
+      - name: Check out trusted private main, never the pull-request head
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
+          cache: npm
+          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ runner.temp }}/deepgeno-engine
+      - name: Validate immutable markers and bounded choices
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" triage-check
+        env:
+          DEEPGENO_MAX_SUMMARIES_PER_RUN: ${{ vars.DEEPGENO_MAX_SUMMARIES_PER_RUN || '20' }}

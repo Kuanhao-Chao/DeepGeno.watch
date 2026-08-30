@@ -1,0 +1,67 @@
+name: Private operations preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate engine pin and repository-scoped App tokens
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Mint read-only private repository token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: read
+      - name: Verify private token repository set
+        shell: bash
+        run: |
+          set -euo pipefail
+          repositories=()
+          while IFS= read -r repository; do repositories+=("$repository"); done < <(
+            gh api --paginate /installation/repositories --jq '.repositories[].full_name'
+          )
+          [[ "${#repositories[@]}" -eq 1 ]]
+          [[ "${repositories[0]}" == "$EXPECTED_REPOSITORY" ]]
+        env:
+          GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
+          EXPECTED_REPOSITORY: Kuanhao-Chao/DeepGeno.watch-state
+      - name: Mint read-only public repository token
+        id: public-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch
+          permission-contents: read
+      - name: Verify public token repository set
+        shell: bash
+        run: |
+          set -euo pipefail
+          repositories=()
+          while IFS= read -r repository; do repositories+=("$repository"); done < <(
+            gh api --paginate /installation/repositories --jq '.repositories[].full_name'
+          )
+          [[ "${#repositories[@]}" -eq 1 ]]
+          [[ "${repositories[0]}" == "$EXPECTED_REPOSITORY" ]]
+        env:
+          GH_TOKEN: ${{ steps.public-app-token.outputs.token }}
+          EXPECTED_REPOSITORY: Kuanhao-Chao/DeepGeno.watch
