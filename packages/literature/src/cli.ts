@@ -22,6 +22,11 @@ import { EuropePmcSearchSource } from "./sources/europe-pmc-search.js";
 import { OpenAlexDoiEnricher } from "./sources/openalex.js";
 import { GitFileStateStore } from "./store.js";
 import { LiteratureError, invariant } from "./errors.js";
+import {
+  assertGitHubRepository,
+  deliverStoredPublication,
+} from "./delivery.js";
+import { GitHubRestDeliveryAdapter } from "./github-rest.js";
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseArguments(argv);
@@ -200,6 +205,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       });
       break;
     }
+    case "deliver": {
+      const deliveryConfig = resolvePublicDeliveryConfig(process.env);
+      report = await deliverStoredPublication({
+        store,
+        slug: requiredFlag(parsed, "slug"),
+        repository: deliveryConfig.repository,
+        port: new GitHubRestDeliveryAdapter({ token: deliveryConfig.token }),
+      });
+      break;
+    }
     case "project": {
       const lifecycle = createLiteratureLifecycle(baseOptions);
       const catalog = await lifecycle.project({ kind: "public-catalog" });
@@ -218,7 +233,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     default:
       throw new LiteratureError(
         "unknown_command",
-        "Expected discover, apply-triage, synthesize, apply-draft, publish, or project",
+        "Expected discover, apply-triage, synthesize, apply-draft, publish, deliver, or project",
       );
   }
   process.stdout.write(
@@ -237,8 +252,28 @@ const PRIVATE_STATE_COMMANDS = new Set([
   "synthesize",
   "apply-draft",
   "publish",
+  "deliver",
   "project",
 ]);
+
+export function resolvePublicDeliveryConfig(
+  environment: NodeJS.ProcessEnv,
+): { repository: string; token: string } {
+  const repository = environment.DEEPGENO_PUBLIC_REPOSITORY?.trim();
+  invariant(
+    repository,
+    "delivery_repository_required",
+    "DEEPGENO_PUBLIC_REPOSITORY is required for public delivery",
+  );
+  assertGitHubRepository(repository);
+  const token = environment.DEEPGENO_PUBLIC_GITHUB_TOKEN?.trim();
+  invariant(
+    token,
+    "github_token_required",
+    "DEEPGENO_PUBLIC_GITHUB_TOKEN is required for public delivery",
+  );
+  return { repository, token };
+}
 
 export function resolveCliRoots(
   command: string,

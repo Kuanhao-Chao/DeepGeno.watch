@@ -1,17 +1,46 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertPrivateRepository,
+  assertMergedByCurator,
+  automationWorkingDirectory,
+  buildLiteratureInvocation,
+  executeApprovedPublication,
+  executeStagedDiscovery,
   extractReviewId,
   parseJsonLine,
   relevantPullRequestKind,
+  resolveAutomationRoots,
   resolveDiscoveryWindows,
   validateChangedPaths,
   validateModelEnvironment,
   validateSelectedPaperLimit,
 } from "./workflow-lib.mjs";
 
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
 describe("GitHub literature workflow boundaries", () => {
+  it("imports automation without running a command and exposes its entrypoint for testing", async () => {
+    const automation = await import("./automation.mjs");
+    expect(typeof automation.main).toBe("function");
+  });
+
   it("rejects review automation in a public repository", () => {
     expect(() =>
       assertPrivateRepository({ repository: { private: false } }),
@@ -126,4 +155,270 @@ describe("GitHub literature workflow boundaries", () => {
       /Expected literature command/,
     );
   });
+
+  it("requires distinct explicit engine and state roots in GitHub Actions", () => {
+    expect(
+      resolveAutomationRoots(
+        {
+          GITHUB_ACTIONS: "true",
+          DEEPGENO_PROJECT_ROOT: "/checkout/engine",
+          DEEPGENO_STATE_ROOT: "/checkout/private-state",
+        },
+        "/fallback",
+      ),
+    ).toEqual({
+      projectRoot: "/checkout/engine",
+      stateRoot: "/checkout/private-state",
+    });
+    expect(() =>
+      resolveAutomationRoots(
+        { GITHUB_ACTIONS: "true", DEEPGENO_PROJECT_ROOT: "/checkout/engine" },
+        "/fallback",
+      ),
+    ).toThrow(/DEEPGENO_STATE_ROOT/);
+    expect(() =>
+      resolveAutomationRoots(
+        {
+          GITHUB_ACTIONS: "true",
+          DEEPGENO_PROJECT_ROOT: "/checkout/same",
+          DEEPGENO_STATE_ROOT: "/checkout/same",
+        },
+        "/fallback",
+      ),
+    ).toThrow(/distinct/);
+  });
+
+  it("builds every literature invocation with literal split roots and the engine cwd", () => {
+    const roots = {
+      projectRoot: "/checkout/engine",
+      stateRoot: "/checkout/private-state",
+    };
+    expect(
+      buildLiteratureInvocation("discover", ["--from", "2026-08-28"], roots),
+    ).toEqual({
+      command: "npm",
+      args: [
+        "run",
+        "--silent",
+        "literature",
+        "--",
+        "discover",
+        "--project-root",
+        "/checkout/engine",
+        "--state-root",
+        "/checkout/private-state",
+        "--from",
+        "2026-08-28",
+      ],
+      cwd: "/checkout/engine",
+    });
+    expect(automationWorkingDirectory("npm", roots)).toBe("/checkout/engine");
+    expect(automationWorkingDirectory("build", roots)).toBe(
+      "/checkout/engine",
+    );
+    expect(automationWorkingDirectory("privacy", roots)).toBe(
+      "/checkout/engine",
+    );
+    expect(automationWorkingDirectory("git", roots)).toBe(
+      "/checkout/private-state",
+    );
+    expect(automationWorkingDirectory("gh", roots)).toBe(
+      "/checkout/private-state",
+    );
+  });
+
+  it("requires the configured curator to be the exact normalized merge actor", () => {
+    const event = {
+      pull_request: { merged_by: { login: "Genome-Curator" } },
+    };
+    expect(assertMergedByCurator(event, " genome-curator ")).toBe(
+      "Genome-Curator",
+    );
+    expect(() => assertMergedByCurator(event, "another-curator")).toThrow(
+      /configured curator/,
+    );
+    expect(() => assertMergedByCurator(event, " ")).toThrow(
+      /DEEPGENO_CURATOR_GITHUB_LOGIN/,
+    );
+  });
+
+  it("runs shadow discovery in a disposable copy without mutating or accepting real state", async () => {
+    const fixture = await stagedFixture();
+    let accepted = 0;
+
+    const reports = await executeStagedDiscovery({
+      stateRoot: fixture.stateRoot,
+      runnerTemp: fixture.runnerTemp,
+      shadow: true,
+      discover: async (stagedStateRoot: string) => {
+        await writePrivateMutation(stagedStateRoot, "shadow-only");
+        return [
+          {
+            changedPaths: ["data/private/checkpoints/source.json"],
+            sourceIssues: [
+              { source: "fixture", code: "partial", message: "partial" },
+            ],
+          },
+        ];
+      },
+      accept: async () => {
+        accepted += 1;
+      },
+    });
+
+    expect(reports[0]!.sourceIssues).toHaveLength(1);
+    expect(accepted).toBe(0);
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("original");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("rejects non-shadow source issues before real-state mutation or Gate 1 acceptance", async () => {
+    const fixture = await stagedFixture();
+    let accepted = 0;
+
+    await expect(
+      executeStagedDiscovery({
+        stateRoot: fixture.stateRoot,
+        runnerTemp: fixture.runnerTemp,
+        shadow: false,
+        discover: async (stagedStateRoot: string) => {
+          await writePrivateMutation(stagedStateRoot, "must-not-promote");
+          return [
+            {
+              changedPaths: ["data/private/checkpoints/source.json"],
+              sourceIssues: [
+                {
+                  source: "fixture",
+                  code: "source_unavailable",
+                  message: "unavailable",
+                },
+              ],
+            },
+          ];
+        },
+        accept: async () => {
+          accepted += 1;
+        },
+      }),
+    ).rejects.toThrow(/source issue/);
+
+    expect(accepted).toBe(0);
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("original");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("promotes only validated private paths after a clean discovery", async () => {
+    const fixture = await stagedFixture();
+    let acceptedValue = "";
+
+    await executeStagedDiscovery({
+      stateRoot: fixture.stateRoot,
+      runnerTemp: fixture.runnerTemp,
+      shadow: false,
+      discover: async (stagedStateRoot: string) => {
+        await writePrivateMutation(stagedStateRoot, "promoted");
+        return [
+          {
+            changedPaths: ["data/private/checkpoints/source.json"],
+            sourceIssues: [],
+          },
+        ];
+      },
+      accept: async () => {
+        acceptedValue = await readFile(fixture.markerPath, "utf8");
+      },
+    });
+
+    expect(acceptedValue).toBe("promoted");
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("promoted");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("keeps public CI while removing all public operational workflows", async () => {
+    const workflowRoot = path.resolve(import.meta.dirname, "../../.github/workflows");
+    expect((await readdir(workflowRoot)).sort()).toEqual(["ci.yml"]);
+  });
+
+  it("persists pending state before public delivery and persists the receipt afterward", async () => {
+    const events: string[] = [];
+    let privateRemoteState = "";
+
+    const result = await executeApprovedPublication({
+      publish: async () => {
+        events.push("seal-pending");
+        return { slug: "paper-slug", changedPaths: ["pending.json"] };
+      },
+      commitPending: async (publication: { changedPaths: string[] }) => {
+        expect(publication.changedPaths).toEqual(["pending.json"]);
+        privateRemoteState = "pending";
+        events.push("push-pending");
+      },
+      verifyProject: async () => {
+        expect(privateRemoteState).toBe("pending");
+        events.push("verify-project");
+      },
+      deliver: async (slug: string) => {
+        expect(slug).toBe("paper-slug");
+        expect(privateRemoteState).toBe("pending");
+        events.push("public-request");
+        return {
+          state: "pr-open",
+          pullRequestUrl: "https://github.com/example/public/pull/1",
+          changedPaths: ["receipt.json"],
+        };
+      },
+      commitReceipt: async (delivery: { changedPaths: string[] }) => {
+        expect(delivery.changedPaths).toEqual(["receipt.json"]);
+        privateRemoteState = "pr-open";
+        events.push("push-receipt");
+      },
+    });
+
+    expect(events).toEqual([
+      "seal-pending",
+      "push-pending",
+      "verify-project",
+      "public-request",
+      "push-receipt",
+    ]);
+    expect(privateRemoteState).toBe("pr-open");
+    expect(result.delivery.pullRequestUrl).toContain("/pull/1");
+  });
 });
+
+async function stagedFixture(): Promise<{
+  stateRoot: string;
+  runnerTemp: string;
+  markerPath: string;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), "deepgeno-workflow-test-"));
+  roots.push(root);
+  const stateRoot = path.join(root, "state");
+  const runnerTemp = path.join(root, "runner");
+  const markerPath = path.join(
+    stateRoot,
+    "data",
+    "private",
+    "checkpoints",
+    "source.json",
+  );
+  await mkdir(path.dirname(markerPath), { recursive: true });
+  await mkdir(runnerTemp, { recursive: true });
+  await writeFile(markerPath, "original", "utf8");
+  return { stateRoot, runnerTemp, markerPath };
+}
+
+async function writePrivateMutation(
+  stateRoot: string,
+  value: string,
+): Promise<void> {
+  const target = path.join(
+    stateRoot,
+    "data",
+    "private",
+    "checkpoints",
+    "source.json",
+  );
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, value, "utf8");
+}

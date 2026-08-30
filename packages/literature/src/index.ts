@@ -26,7 +26,25 @@ export {
   type Delivery,
   type DeliveryState,
   type PrivateRelease,
+  type DeliveryFailure,
+  type DeliveryRemoteReceipt,
+  type DeliveryTransitionDetails,
 } from "./release.js";
+export {
+  assertGitHubDeliveryCoordinates,
+  assertGitHubRepository,
+  deliverPublicRelease,
+  deliverStoredPublication,
+  type DeliveryOutcome,
+  type GitHubBranch,
+  type GitHubChangedFile,
+  type GitHubContent,
+  type GitHubDeliveryPort,
+  type GitHubPullRequest,
+  type PublicDeliveryRequest,
+  type StoredDeliveryReport,
+} from "./delivery.js";
+export { GitHubRestDeliveryAdapter } from "./github-rest.js";
 export { AllowlistedHttpClient, DEFAULT_SOURCE_HOSTS } from "./http.js";
 export { BioRxivSource } from "./sources/biorxiv.js";
 export { ArxivOaiSource } from "./sources/arxiv.js";

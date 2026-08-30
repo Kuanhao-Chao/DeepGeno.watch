@@ -24,6 +24,24 @@ export type PrivateRelease = Readonly<{
 
 export type DeliveryState = "pending" | "pr-open" | "merged" | "failed";
 
+export type DeliveryRemoteReceipt = Readonly<{
+  repository: string;
+  branch: string;
+  headSha: string;
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+}>;
+
+export type DeliveryFailure = Readonly<{
+  code: "pull-request-closed";
+  message: string;
+}>;
+
+export type DeliveryTransitionDetails = Readonly<{
+  remote?: DeliveryRemoteReceipt;
+  failure?: DeliveryFailure;
+}>;
+
 export type Delivery = Readonly<{
   schemaVersion: "1.0";
   id: string;
@@ -34,6 +52,8 @@ export type Delivery = Readonly<{
   state: DeliveryState;
   createdAt: string;
   updatedAt: string;
+  remote?: DeliveryRemoteReceipt;
+  failure?: DeliveryFailure;
 }>;
 
 export function sealPublicProjection(
@@ -109,26 +129,56 @@ export function transitionDelivery(
   delivery: Delivery,
   state: DeliveryState,
   updatedAt: string,
+  details: DeliveryTransitionDetails = {},
 ): Delivery {
   validateDelivery(delivery);
-  if (delivery.state === state) return delivery;
   const allowed: Readonly<Record<DeliveryState, readonly DeliveryState[]>> = {
-    pending: ["pr-open", "failed"],
+    pending: ["pr-open", "merged", "failed"],
     "pr-open": ["merged", "failed"],
     merged: [],
     failed: ["pending"],
   };
+  if (delivery.state === state) {
+    if (state === "pending" || Object.keys(details).length === 0)
+      return delivery;
+    const reconciled = deliveryWithTransition(
+      delivery,
+      state,
+      delivery.updatedAt,
+      details,
+    );
+    invariant(
+      stableJson(reconciled) === stableJson(delivery),
+      "delivery_receipt_conflict",
+      `Delivery ${delivery.id} already records different remote receipt metadata`,
+    );
+    return delivery;
+  }
   invariant(
     allowed[delivery.state].includes(state),
     "delivery_transition_invalid",
     `Cannot transition delivery from ${delivery.state} to ${state}`,
   );
-  return Object.freeze({ ...delivery, state, updatedAt });
+  return deliveryWithTransition(delivery, state, updatedAt, details);
 }
 
 export function validateDelivery(delivery: Delivery): void {
   const candidate = delivery as Partial<Delivery>;
+  const allowedKeys = new Set([
+    "schemaVersion",
+    "id",
+    "releaseId",
+    "slug",
+    "projectionPath",
+    "projectionSha256",
+    "state",
+    "createdAt",
+    "updatedAt",
+    "remote",
+    "failure",
+  ]);
   invariant(
+    Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
     candidate.schemaVersion === "1.0" &&
       typeof candidate.id === "string" &&
       /^delivery-release-[a-z0-9][a-z0-9-]*$/.test(candidate.id) &&
@@ -141,10 +191,34 @@ export function validateDelivery(delivery: Delivery): void {
       typeof candidate.projectionSha256 === "string" &&
       /^[a-f0-9]{64}$/i.test(candidate.projectionSha256) &&
       typeof candidate.state === "string" &&
-      ["pending", "pr-open", "merged", "failed"].includes(candidate.state),
+      ["pending", "pr-open", "merged", "failed"].includes(candidate.state) &&
+      typeof candidate.createdAt === "string" &&
+      !Number.isNaN(Date.parse(candidate.createdAt)) &&
+      typeof candidate.updatedAt === "string" &&
+      !Number.isNaN(Date.parse(candidate.updatedAt)) &&
+      remoteHasOnlyAllowedKeys(candidate.remote) &&
+      failureHasOnlyAllowedKeys(candidate.failure),
     "delivery_invalid",
     "Private delivery record is invalid",
   );
+  if (candidate.state === "pending") {
+    invariant(
+      candidate.remote === undefined && candidate.failure === undefined,
+      "delivery_invalid",
+      "A pending delivery cannot contain a remote receipt or failure",
+    );
+    return;
+  }
+  validateRemoteReceipt(candidate.remote, candidate.slug);
+  if (candidate.state === "failed") {
+    validateFailure(candidate.failure);
+  } else {
+    invariant(
+      candidate.failure === undefined,
+      "delivery_invalid",
+      "An active delivery cannot contain failure metadata",
+    );
+  }
 }
 
 export function validateRelease(release: PrivateRelease): void {
@@ -221,5 +295,90 @@ function assertProjection(projection: PublicProjection): void {
     sha256(projection.bytes) === projection.sha256,
     "projection_digest_mismatch",
     "Public projection bytes do not match their digest",
+  );
+}
+
+function deliveryWithTransition(
+  delivery: Delivery,
+  state: DeliveryState,
+  updatedAt: string,
+  details: DeliveryTransitionDetails,
+): Delivery {
+  const next = {
+    ...delivery,
+    state,
+    updatedAt,
+  } as {
+    -readonly [Key in keyof Delivery]: Delivery[Key];
+  };
+  delete next.remote;
+  delete next.failure;
+  if (state !== "pending") {
+    if (details.remote) next.remote = Object.freeze({ ...details.remote });
+    if (details.failure)
+      next.failure = Object.freeze({ ...details.failure });
+  }
+  const frozen = Object.freeze(next);
+  validateDelivery(frozen);
+  return frozen;
+}
+
+function remoteHasOnlyAllowedKeys(
+  remote: DeliveryRemoteReceipt | undefined,
+): boolean {
+  if (remote === undefined) return true;
+  if (remote === null || typeof remote !== "object") return false;
+  const allowed = new Set([
+    "repository",
+    "branch",
+    "headSha",
+    "pullRequestNumber",
+    "pullRequestUrl",
+  ]);
+  return Object.keys(remote).every((key) => allowed.has(key));
+}
+
+function failureHasOnlyAllowedKeys(
+  failure: DeliveryFailure | undefined,
+): boolean {
+  if (failure === undefined) return true;
+  if (failure === null || typeof failure !== "object") return false;
+  const allowed = new Set(["code", "message"]);
+  return Object.keys(failure).every((key) => allowed.has(key));
+}
+
+function validateRemoteReceipt(
+  remote: DeliveryRemoteReceipt | undefined,
+  slug: string | undefined,
+): asserts remote is DeliveryRemoteReceipt {
+  const repository = remote?.repository;
+  const pullRequestNumber = remote?.pullRequestNumber;
+  invariant(
+    typeof slug === "string" &&
+      typeof repository === "string" &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+        repository,
+      ) &&
+      remote?.branch === `deepgeno/publish/${slug}` &&
+      typeof remote.headSha === "string" &&
+      /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(remote.headSha) &&
+      Number.isInteger(pullRequestNumber) &&
+      (pullRequestNumber ?? 0) > 0 &&
+      remote.pullRequestUrl ===
+        `https://github.com/${repository}/pull/${pullRequestNumber}`,
+    "delivery_remote_invalid",
+    "Private delivery remote receipt is invalid",
+  );
+}
+
+function validateFailure(
+  failure: DeliveryFailure | undefined,
+): asserts failure is DeliveryFailure {
+  invariant(
+    failure?.code === "pull-request-closed" &&
+      failure.message ===
+        "The public delivery pull request was closed without merging.",
+    "delivery_failure_invalid",
+    "Private delivery failure metadata is invalid",
   );
 }

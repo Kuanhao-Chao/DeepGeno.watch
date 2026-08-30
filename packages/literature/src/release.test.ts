@@ -20,6 +20,18 @@ const projection: PublicProjection = Object.freeze({
   bytes: new TextEncoder().encode("---\ntitle: Sealed paper\n---\n"),
   sha256: "d125ca584b5fee3bb7e0bc1b3d097919887e8e6f784be15eecf9ce0167dd2b52",
 });
+const remote = Object.freeze({
+  repository: "example/deepgeno-watch",
+  branch: "deepgeno/publish/sealed-paper-a1b2c3d",
+  headSha: "b".repeat(40),
+  pullRequestNumber: 7,
+  pullRequestUrl:
+    "https://github.com/example/deepgeno-watch/pull/7",
+});
+const closedFailure = Object.freeze({
+  code: "pull-request-closed" as const,
+  message: "The public delivery pull request was closed without merging.",
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -135,6 +147,7 @@ describe("delivery outbox states", () => {
       pending,
       "failed",
       "2026-08-28T07:01:00.000Z",
+      { remote, failure: closedFailure },
     );
     const retry = transitionDelivery(
       failed,
@@ -145,11 +158,13 @@ describe("delivery outbox states", () => {
       retry,
       "pr-open",
       "2026-08-28T07:03:00.000Z",
+      { remote },
     );
     const merged = transitionDelivery(
       open,
       "merged",
       "2026-08-28T07:04:00.000Z",
+      { remote },
     );
 
     expect([failed.state, retry.state, open.state, merged.state]).toEqual([
@@ -159,6 +174,9 @@ describe("delivery outbox states", () => {
       "merged",
     ]);
     expect(merged.updatedAt).toBe("2026-08-28T07:04:00.000Z");
+    expect(merged.remote).toEqual(remote);
+    expect(retry).not.toHaveProperty("remote");
+    expect(retry).not.toHaveProperty("failure");
   });
 
   it("treats same-state reconciliation as idempotent", () => {
@@ -168,18 +186,33 @@ describe("delivery outbox states", () => {
     ).toBe(pending);
   });
 
-  it("rejects skipping directly from pending to merged and reopening merged", () => {
+  it("allows pending to reconcile directly to merged and rejects reopening merged", () => {
     const pending = createPendingDelivery(release, createdAt);
-    expect(() => transitionDelivery(pending, "merged", createdAt)).toThrowError(
-      expect.objectContaining({ code: "delivery_transition_invalid" }),
-    );
-    const merged = transitionDelivery(
-      transitionDelivery(pending, "pr-open", createdAt),
-      "merged",
-      createdAt,
-    );
+    const merged = transitionDelivery(pending, "merged", createdAt, {
+      remote,
+    });
+    expect(merged).toMatchObject({ state: "merged", remote });
     expect(() => transitionDelivery(merged, "pending", createdAt)).toThrowError(
       expect.objectContaining({ code: "delivery_transition_invalid" }),
+    );
+  });
+
+  it("rejects remote receipt fields outside the private allowlist", () => {
+    const pending = createPendingDelivery(release, createdAt);
+    expect(() =>
+      transitionDelivery(pending, "pr-open", createdAt, {
+        remote: {
+          ...remote,
+          projectionSha256: projection.sha256,
+        } as typeof remote,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "delivery_invalid" }));
+    expect(() =>
+      transitionDelivery(pending, "pr-open", createdAt, {
+        remote: { ...remote, branch: "main" },
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "delivery_remote_invalid" }),
     );
   });
 
@@ -194,12 +227,17 @@ describe("delivery outbox states", () => {
       "pending",
       "pr-open",
       "2026-08-28T07:01:00.000Z",
+      { remote },
     );
 
-    expect(advanced.delivery.state).toBe("pr-open");
-    expect((await store.loadDeliveryForRelease(release))?.state).toBe(
-      "pr-open",
-    );
+    expect(advanced).toMatchObject({
+      changed: true,
+      delivery: { state: "pr-open", remote },
+    });
+    expect(await store.loadDeliveryForRelease(release)).toMatchObject({
+      state: "pr-open",
+      remote,
+    });
     await expect(
       store.transitionDelivery(
         release,
@@ -208,6 +246,37 @@ describe("delivery outbox states", () => {
         "2026-08-28T07:02:00.000Z",
       ),
     ).rejects.toMatchObject({ code: "delivery_transition_invalid" });
+  });
+
+  it("treats concurrent recording of the same remote outcome as an idempotent CAS", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-release-"));
+    roots.push(root);
+    const first = new GitFileStateStore(root);
+    const second = new GitFileStateStore(root);
+    await first.saveDelivery(createPendingDelivery(release, createdAt));
+
+    const results = await Promise.all([
+      first.transitionDelivery(
+        release,
+        "pending",
+        "pr-open",
+        "2026-08-28T07:01:00.000Z",
+        { remote },
+      ),
+      second.transitionDelivery(
+        release,
+        "pending",
+        "pr-open",
+        "2026-08-28T07:01:01.000Z",
+        { remote },
+      ),
+    ]);
+
+    expect(results.map((result) => result.changed).sort()).toEqual([
+      false,
+      true,
+    ]);
+    expect(results[0].delivery).toEqual(results[1].delivery);
   });
 
   it("rejects a loaded delivery that does not match its sealed release", async () => {
@@ -245,12 +314,14 @@ describe("delivery outbox states", () => {
         "pending",
         "pr-open",
         "2026-08-28T07:01:00.000Z",
+        { remote },
       ),
       second.transitionDelivery(
         release,
         "pending",
         "failed",
         "2026-08-28T07:01:00.000Z",
+        { remote, failure: closedFailure },
       ),
     ]);
 

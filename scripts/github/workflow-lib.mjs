@@ -1,5 +1,22 @@
-import { readFile } from "node:fs/promises";
-import { isAbsolute, posix } from "node:path";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 
 export const CANDIDATE_LABEL = "literature-inbox";
 export const SUMMARY_LABEL = "summary-review";
@@ -23,6 +40,142 @@ export function assertPrivateRepository(event) {
       "Literature automation is restricted to a private GitHub repository because review bodies contain private abstracts and drafts.",
     );
   }
+}
+
+export function assertMergedByCurator(event, configuredLogin) {
+  const expected = normalizedLogin(configuredLogin);
+  if (!expected) {
+    throw new Error(
+      "DEEPGENO_CURATOR_GITHUB_LOGIN must name the curator allowed to merge literature reviews",
+    );
+  }
+  const actualValue = event?.pull_request?.merged_by?.login;
+  const actual = normalizedLogin(actualValue);
+  if (!actual || actual !== expected) {
+    throw new Error(
+      "Merged literature review was not attributed to the configured curator",
+    );
+  }
+  return actualValue.trim();
+}
+
+export function resolveAutomationRoots(
+  environment = process.env,
+  cwd = process.cwd(),
+) {
+  const projectValue = optionalRoot(environment.DEEPGENO_PROJECT_ROOT);
+  const stateValue = optionalRoot(environment.DEEPGENO_STATE_ROOT);
+  if (environment.GITHUB_ACTIONS === "true") {
+    if (!projectValue)
+      throw new Error(
+        "DEEPGENO_PROJECT_ROOT is required in GitHub Actions",
+      );
+    if (!stateValue)
+      throw new Error("DEEPGENO_STATE_ROOT is required in GitHub Actions");
+  }
+  const projectRoot = resolve(cwd, projectValue ?? cwd);
+  const stateRoot = resolve(cwd, stateValue ?? cwd);
+  if (
+    environment.GITHUB_ACTIONS === "true" &&
+    projectRoot === stateRoot
+  ) {
+    throw new Error(
+      "DEEPGENO_PROJECT_ROOT and DEEPGENO_STATE_ROOT must be distinct in GitHub Actions",
+    );
+  }
+  return { projectRoot, stateRoot };
+}
+
+export function buildLiteratureInvocation(
+  command,
+  args,
+  roots,
+  stateRoot = roots.stateRoot,
+) {
+  return {
+    command: "npm",
+    args: [
+      "run",
+      "--silent",
+      "literature",
+      "--",
+      command,
+      "--project-root",
+      roots.projectRoot,
+      "--state-root",
+      resolve(stateRoot),
+      ...args,
+    ],
+    cwd: roots.projectRoot,
+  };
+}
+
+export function automationWorkingDirectory(kind, roots) {
+  if (new Set(["npm", "literature", "build", "privacy"]).has(kind))
+    return roots.projectRoot;
+  if (new Set(["git", "gh", "review"]).has(kind)) return roots.stateRoot;
+  throw new Error(`Unknown automation tool kind: ${String(kind)}`);
+}
+
+/**
+ * Runs discovery against a disposable private-state copy. A clean non-shadow
+ * result is promoted atomically by allowlisted path before Gate 1 side effects;
+ * shadow results and partial-source results never touch the real state root.
+ */
+export async function executeStagedDiscovery({
+  stateRoot,
+  runnerTemp,
+  shadow,
+  discover,
+  accept,
+}) {
+  const actualRoot = resolve(stateRoot);
+  const temporaryParent = resolve(runnerTemp);
+  await mkdir(temporaryParent, { recursive: true });
+  const stagedStateRoot = await mkdtemp(
+    join(temporaryParent, "discovery-state-"),
+  );
+  try {
+    await copyPrivateState(actualRoot, stagedStateRoot);
+    const reports = await discover(stagedStateRoot);
+    if (!Array.isArray(reports))
+      throw new Error("Staged discovery must return an array of reports");
+    const sourceIssueCount = reports.reduce((count, report) => {
+      if (!Array.isArray(report?.sourceIssues))
+        throw new Error("sourceIssues must be an array");
+      return count + report.sourceIssues.length;
+    }, 0);
+    if (shadow) return reports;
+    if (sourceIssueCount > 0) {
+      throw new Error(
+        `Non-shadow discovery stopped because ${sourceIssueCount} source issue(s) were reported`,
+      );
+    }
+    const changedPaths = validateChangedPaths(
+      reports.flatMap((report) => report.changedPaths),
+      [PRIVATE_PREFIX],
+    );
+    await promotePrivatePaths(stagedStateRoot, actualRoot, changedPaths);
+    await accept(reports);
+    return reports;
+  } finally {
+    await removeStagedRoot(temporaryParent, stagedStateRoot);
+  }
+}
+
+export async function executeApprovedPublication({
+  publish,
+  commitPending,
+  verifyProject,
+  deliver,
+  commitReceipt,
+}) {
+  const publication = await publish();
+  await commitPending(publication);
+  await verifyProject();
+  const delivery = await deliver(publication.slug);
+  await commitReceipt(delivery);
+  return { publication, delivery };
 }
 
 export function relevantPullRequestKind(event) {
@@ -268,4 +421,55 @@ function boundedInteger(value, label, minimum, maximum) {
     );
   }
   return parsed;
+}
+
+function normalizedLogin(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function optionalRoot(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function copyPrivateState(sourceRoot, targetRoot) {
+  const source = join(sourceRoot, "data", "private");
+  const target = join(targetRoot, "data", "private");
+  try {
+    await cp(source, target, { recursive: true, preserveTimestamps: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+async function promotePrivatePaths(stagedRoot, actualRoot, changedPaths) {
+  for (const changedPath of changedPaths) {
+    const source = confinedPath(stagedRoot, changedPath);
+    const target = confinedPath(actualRoot, changedPath);
+    const bytes = await readFile(source);
+    await mkdir(dirname(target), { recursive: true });
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, bytes, { mode: 0o600 });
+    await rename(temporary, target);
+  }
+}
+
+function confinedPath(root, changedPath) {
+  const normalized = validateRelativePath(changedPath);
+  if (!normalized.startsWith(PRIVATE_PREFIX)) {
+    throw new Error(`Staged discovery path must remain private: ${normalized}`);
+  }
+  const resolvedRoot = resolve(root);
+  const target = resolve(resolvedRoot, normalized);
+  if (!target.startsWith(`${resolvedRoot}${sep}`)) {
+    throw new Error(`Staged discovery path escapes its root: ${normalized}`);
+  }
+  return target;
+}
+
+async function removeStagedRoot(parent, stagedRoot) {
+  const nested = relative(parent, stagedRoot);
+  if (!nested || nested === ".." || nested.startsWith(`..${sep}`)) {
+    throw new Error("Refusing to remove a staged root outside runner temp");
+  }
+  await rm(stagedRoot, { recursive: true, force: true });
 }

@@ -37,6 +37,7 @@ import {
   validateReleasePublicationLink,
   validateRelease,
   type Delivery,
+  type DeliveryTransitionDetails,
   type DeliveryState,
   type PrivateRelease,
 } from "./release.js";
@@ -372,7 +373,8 @@ export class GitFileStateStore {
     expectedState: DeliveryState,
     state: DeliveryState,
     updatedAt: string,
-  ): Promise<{ delivery: Delivery; path: string }> {
+    details: DeliveryTransitionDetails = {},
+  ): Promise<{ delivery: Delivery; path: string; changed: boolean }> {
     return this.withDeliveryLock(release.id, async () => {
       const existing = await this.loadDeliveryForRelease(release);
       invariant(
@@ -380,19 +382,35 @@ export class GitFileStateStore {
         "delivery_missing",
         `Private delivery is missing for release: ${release.id}`,
       );
-      invariant(
-        existing.state === expectedState,
-        "delivery_state_conflict",
-        `Delivery state changed from expected ${expectedState} to ${existing.state}`,
+      if (existing.state !== expectedState) {
+        if (existing.state === state) {
+          transitionDeliveryRecord(existing, state, updatedAt, details);
+          return {
+            delivery: existing,
+            path: this.deliveryPath(existing),
+            changed: false,
+          };
+        }
+        invariant(
+          false,
+          "delivery_state_conflict",
+          `Delivery state changed from expected ${expectedState} to ${existing.state}`,
+        );
+      }
+      const delivery = transitionDeliveryRecord(
+        existing,
+        state,
+        updatedAt,
+        details,
       );
-      const delivery = transitionDeliveryRecord(existing, state, updatedAt);
       validateDeliveryReleaseLink(delivery, release);
       const target = this.privatePath(
         "deliveries",
         `${safeId(delivery.id)}.json`,
       );
-      if (delivery !== existing) await this.writeJson(target, delivery);
-      return { delivery, path: target };
+      const changed = delivery !== existing;
+      if (changed) await this.writeJson(target, delivery);
+      return { delivery, path: target, changed };
     });
   }
 

@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { main, resolveCliRoots } from "./cli.js";
+import { main, resolveCliRoots, resolvePublicDeliveryConfig } from "./cli.js";
 import { GitFileStateStore } from "./store.js";
 import { renderCandidateReview } from "./review.js";
 import { createLiteratureLifecycle } from "./lifecycle.js";
@@ -101,6 +101,31 @@ describe("literature CLI roots", () => {
       projectRoot: path.resolve("/working-directory", "project"),
       stateRoot: path.resolve("/working-directory", "private-state"),
     });
+  });
+
+  it("requires explicit public repository and installation-token delivery configuration", () => {
+    expect(
+      resolvePublicDeliveryConfig({
+        DEEPGENO_PUBLIC_REPOSITORY: "example/deepgeno-watch",
+        DEEPGENO_PUBLIC_GITHUB_TOKEN: "installation-token",
+      }),
+    ).toEqual({
+      repository: "example/deepgeno-watch",
+      token: "installation-token",
+    });
+    expect(() =>
+      resolvePublicDeliveryConfig({
+        DEEPGENO_PUBLIC_REPOSITORY: "example/deepgeno-watch",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "github_token_required" }));
+    expect(() =>
+      resolvePublicDeliveryConfig({
+        DEEPGENO_PUBLIC_REPOSITORY: "main",
+        DEEPGENO_PUBLIC_GITHUB_TOKEN: "installation-token",
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: "delivery_repository_invalid" }),
+    );
   });
 
   it("loads config from project-root while reading state only from state-root", async () => {
