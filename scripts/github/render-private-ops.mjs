@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 
 import {
+  link,
   lstat,
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile,
 } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,24 +58,35 @@ export async function renderPrivateOps({
   await validateTemplate();
 
   const destinationRoot = path.resolve(destination);
+  await validateDestinationAncestors(destinationRoot);
   const destinationStat = await optionalLstat(destinationRoot);
-  if (destinationStat?.isSymbolicLink()) {
-    throw new Error("Companion destination must not be a symlink");
-  }
-  if (destinationStat && !destinationStat.isDirectory()) {
-    throw new Error("Companion destination must be a directory");
-  }
   if (!destinationStat)
     await mkdir(destinationRoot, { recursive: true, mode: 0o755 });
+  const createdStat = await lstat(destinationRoot);
+  if (createdStat.isSymbolicLink() || !createdStat.isDirectory()) {
+    throw new Error(
+      "Companion destination must be a real directory, not a symlink",
+    );
+  }
+  if ((await realpath(destinationRoot)) !== destinationRoot) {
+    throw new Error("Companion destination must resolve to its canonical path");
+  }
 
   const tree = await inspectTree(destinationRoot, { ignoreGitMetadata: true });
   for (const directory of tree.directories) {
-    if (!allowedDirectories.has(directory)) {
+    if (
+      !allowedDirectories.has(directory) &&
+      !isPrivateRuntimePath(directory)
+    ) {
       throw new Error(`Unexpected companion path: ${directory}`);
     }
   }
   for (const file of tree.files) {
-    if (file !== "engine.lock.json" && !PRIVATE_OPS_FILES.includes(file)) {
+    if (
+      file !== "engine.lock.json" &&
+      !PRIVATE_OPS_FILES.includes(file) &&
+      !isPrivateRuntimePath(file)
+    ) {
       throw new Error(`Unexpected companion path: ${file}`);
     }
   }
@@ -80,46 +94,39 @@ export async function renderPrivateOps({
   const existingStatic = tree.files.filter((file) =>
     PRIVATE_OPS_FILES.includes(file),
   );
-  if (existingStatic.length === 0) {
-    await copyStaticTemplate(destinationRoot);
-  } else {
-    if (existingStatic.length !== PRIVATE_OPS_FILES.length) {
-      throw new Error(
-        "Static template drift: the companion skeleton is incomplete",
-      );
-    }
-    await assertStaticTemplateMatches(destinationRoot);
-  }
+  await assertStaticTemplateMatches(destinationRoot, existingStatic);
 
   const lockPath = path.join(destinationRoot, "engine.lock.json");
   const desiredBytes = lockBytes(commit);
   const lockStat = await optionalLstat(lockPath);
-  if (!lockStat) {
-    await writeFile(lockPath, desiredBytes, {
-      encoding: "utf8",
-      mode: 0o644,
-      flag: "wx",
-    });
-    return {
-      destination: destinationRoot,
-      repository,
-      commit,
-      repinned: false,
-    };
-  }
-  if (lockStat.isSymbolicLink()) {
-    throw new Error("engine.lock.json must be a regular file, not a symlink");
-  }
-  if (!lockStat.isFile()) {
-    throw new Error("engine.lock.json must be a regular file");
-  }
+  let current;
+  if (lockStat) {
+    if (lockStat.isSymbolicLink()) {
+      throw new Error("engine.lock.json must be a regular file, not a symlink");
+    }
+    if (!lockStat.isFile()) {
+      throw new Error("engine.lock.json must be a regular file");
+    }
 
-  const currentBytes = await readFile(lockPath, "utf8");
-  const current = parseLock(currentBytes);
-  if (current.commit === commit) {
-    if (currentBytes !== desiredBytes) {
+    const currentBytes = await readFile(lockPath, "utf8");
+    current = parseLock(currentBytes);
+    if (currentBytes !== lockBytes(current.commit)) {
       throw new Error("engine.lock.json drift: expected deterministic bytes");
     }
+    if (current.commit !== commit && !repin) {
+      throw new Error(
+        `Engine pin is ${current.commit}; pass --repin to change it to ${commit}`,
+      );
+    }
+  }
+
+  const missingStatic = PRIVATE_OPS_FILES.filter(
+    (relative) => !existingStatic.includes(relative),
+  );
+  await copyStaticTemplate(destinationRoot, missingStatic);
+
+  if (!current) {
+    await createFileAtomic(lockPath, desiredBytes, destinationRoot);
     return {
       destination: destinationRoot,
       repository,
@@ -127,12 +134,15 @@ export async function renderPrivateOps({
       repinned: false,
     };
   }
-  if (!repin) {
-    throw new Error(
-      `Engine pin is ${current.commit}; pass --repin to change it to ${commit}`,
-    );
+  if (current.commit === commit) {
+    return {
+      destination: destinationRoot,
+      repository,
+      commit,
+      repinned: false,
+    };
   }
-  await writeAtomic(lockPath, desiredBytes);
+  await replaceFileAtomic(lockPath, desiredBytes, destinationRoot);
   return { destination: destinationRoot, repository, commit, repinned: true };
 }
 
@@ -195,18 +205,18 @@ async function validateTemplate() {
   }
 }
 
-async function copyStaticTemplate(destinationRoot) {
-  for (const relative of PRIVATE_OPS_FILES) {
+async function copyStaticTemplate(destinationRoot, missingStatic) {
+  for (const relative of missingStatic) {
     const source = path.join(templateRoot, relative);
     const target = path.join(destinationRoot, relative);
     await mkdir(path.dirname(target), { recursive: true, mode: 0o755 });
     const bytes = await readFile(source);
-    await writeFile(target, bytes, { mode: 0o644, flag: "wx" });
+    await createFileAtomic(target, bytes, destinationRoot);
   }
 }
 
-async function assertStaticTemplateMatches(destinationRoot) {
-  for (const relative of PRIVATE_OPS_FILES) {
+async function assertStaticTemplateMatches(destinationRoot, existingStatic) {
+  for (const relative of existingStatic) {
     const target = path.join(destinationRoot, relative);
     const stat = await lstat(target);
     if (stat.isSymbolicLink()) {
@@ -229,6 +239,13 @@ async function assertStaticTemplateMatches(destinationRoot) {
   }
 }
 
+function isPrivateRuntimePath(relative) {
+  return (
+    relative.startsWith("data/private/") &&
+    relative !== "data/private/README.md"
+  );
+}
+
 async function inspectTree(root, { ignoreGitMetadata = false } = {}) {
   const files = [];
   const directories = [];
@@ -241,9 +258,12 @@ async function inspectTree(root, { ignoreGitMetadata = false } = {}) {
       const child = path.posix.join(relative, entry.name);
       if (ignoreGitMetadata && relative === "" && entry.name === ".git") {
         const gitStat = await lstat(path.join(root, child));
-        if (gitStat.isSymbolicLink()) {
-          throw new Error("Companion .git metadata must not be a symlink");
+        if (gitStat.isSymbolicLink() || !gitStat.isDirectory()) {
+          throw new Error(
+            "Git metadata must be a real directory, not a symlink or special file",
+          );
         }
+        await assertRegularTree(path.join(root, child), child);
         continue;
       }
       const stat = await lstat(path.join(root, child));
@@ -267,6 +287,25 @@ async function inspectTree(root, { ignoreGitMetadata = false } = {}) {
   return { files: files.sort(), directories: directories.sort() };
 }
 
+async function assertRegularTree(root, relativeRoot) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const absolute = path.join(root, entry.name);
+    const relative = path.posix.join(relativeRoot, entry.name);
+    const stat = await lstat(absolute);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Git metadata must not contain a symlink: ${relative}`);
+    }
+    if (stat.isDirectory()) {
+      await assertRegularTree(absolute, relative);
+    } else if (!stat.isFile()) {
+      throw new Error(
+        `Git metadata must contain only regular files and directories: ${relative}`,
+      );
+    }
+  }
+}
+
 async function optionalLstat(target) {
   try {
     return await lstat(target);
@@ -276,10 +315,46 @@ async function optionalLstat(target) {
   }
 }
 
-async function writeAtomic(target, bytes) {
-  const temporary = `${target}.${process.pid}.tmp`;
+async function validateDestinationAncestors(destinationRoot) {
+  const parsed = path.parse(destinationRoot);
+  const segments = destinationRoot
+    .slice(parsed.root.length)
+    .split(path.sep)
+    .filter(Boolean);
+  let current = parsed.root;
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    const stat = await optionalLstat(current);
+    if (!stat) break;
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `Companion destination ancestor must not be a symlink: ${current}`,
+      );
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(
+        `Companion destination ancestor must be a directory: ${current}`,
+      );
+    }
+  }
+}
+
+async function createFileAtomic(target, bytes, destinationRoot) {
+  const temporary = temporaryPath(destinationRoot);
   await writeFile(temporary, bytes, {
-    encoding: "utf8",
+    mode: 0o644,
+    flag: "wx",
+  });
+  try {
+    await link(temporary, target);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function replaceFileAtomic(target, bytes, destinationRoot) {
+  const temporary = temporaryPath(destinationRoot);
+  await writeFile(temporary, bytes, {
     mode: 0o644,
     flag: "wx",
   });
@@ -293,6 +368,13 @@ async function writeAtomic(target, bytes) {
     }
     throw error;
   }
+}
+
+function temporaryPath(destinationRoot) {
+  return path.join(
+    path.dirname(destinationRoot),
+    `.deepgeno-private-ops-${process.pid}-${randomUUID()}.tmp`,
+  );
 }
 
 function parseArguments(args) {

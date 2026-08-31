@@ -34,9 +34,6 @@ jobs:
     outputs:
       papers: ${{ steps.record.outputs.papers }}
       selected_count: ${{ steps.record.outputs.selected_count }}
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private-state contents token
         id: private-app-token
@@ -55,20 +52,21 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - id: record
         name: Persist candidate decisions
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" record-triage
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_CURATOR_GITHUB_LOGIN: ${{ vars.DEEPGENO_CURATOR_GITHUB_LOGIN }}
           DEEPGENO_MAX_SUMMARIES_PER_RUN: ${{ vars.DEEPGENO_MAX_SUMMARIES_PER_RUN || '20' }}
 
@@ -86,9 +84,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: synthesis
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private review token
         id: private-app-token
@@ -109,19 +104,20 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Validate explicit model selection
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -130,6 +126,8 @@ jobs:
       - name: Create private draft and Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -144,9 +142,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: synthesis
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private review token
         id: private-app-token
@@ -167,19 +162,20 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Validate explicit model selection
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -188,6 +184,8 @@ jobs:
       - name: Create private draft and Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -209,9 +207,6 @@ jobs:
       action: ${{ steps.record.outputs.action }}
       draft_id: ${{ steps.record.outputs.draft_id }}
       paper_id: ${{ steps.record.outputs.paper_id }}
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private-state contents token
         id: private-app-token
@@ -230,20 +225,21 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - id: record
         name: Persist summary decision and review provenance
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" record-summary
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_CURATOR_GITHUB_LOGIN: ${{ vars.DEEPGENO_CURATOR_GITHUB_LOGIN }}
 
   revise-requested:
@@ -253,9 +249,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: synthesis
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private review token
         id: private-app-token
@@ -276,19 +269,20 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Validate explicit model selection
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -297,6 +291,8 @@ jobs:
       - name: Create revised private draft and a new Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
@@ -312,9 +308,6 @@ jobs:
     if: needs.record-summary.outputs.action == 'approve'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private-state contents token
         id: private-app-token
@@ -343,16 +336,15 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Confirm the fixed public destination
         shell: bash
         run: |
@@ -363,6 +355,8 @@ jobs:
       - name: Project, verify, seal, and open the public pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" publish-approved
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           INPUT_DRAFT_ID: ${{ needs.record-summary.outputs.draft_id }}
           DEEPGENO_PUBLIC_REPOSITORY: ${{ vars.DEEPGENO_PUBLIC_REPOSITORY }}
           DEEPGENO_PUBLIC_GITHUB_TOKEN: ${{ steps.public-app-token.outputs.token }}

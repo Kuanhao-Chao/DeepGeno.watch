@@ -62,6 +62,19 @@ describe("private operations companion template", () => {
       /engine_root.*workspace_root.*\*|workspace_root.*engine_root.*\*/s,
     );
     expect(action).toMatch(/\[\[.*-e.*engine_root.*-L.*engine_root/s);
+    expect(action).toContain("id: bootstrap");
+    expect(action).toContain("project-root:");
+    expect(action).toContain(
+      "value: ${{ steps.bootstrap.outputs.project-root }}",
+    );
+    expect(action).toContain("node-version:");
+    expect(action).toContain(
+      "value: ${{ steps.bootstrap.outputs.node-version }}",
+    );
+    expect(action).toContain('supportedNodeVersion = "22.18.0"');
+    expect(action).toContain('echo "project-root=$engine_root"');
+    expect(action).toContain('echo "node-version=$node_version"');
+    expect(action).toContain('>> "$GITHUB_OUTPUT"');
     expect(action).not.toContain("actions/checkout");
     expect(action).not.toContain("${{ secrets.");
     expect(action).not.toMatch(/https:\/\/[^\s]+@github\.com/);
@@ -85,12 +98,10 @@ describe("private operations companion template", () => {
       expect(
         occurrences(workflow, "uses: ./.github/actions/bootstrap-engine"),
       ).toBe(checkoutCount);
-      expect(workflow).toContain(
-        "DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine",
-      );
-      expect(workflow).toContain(
-        "DEEPGENO_STATE_ROOT: ${{ github.workspace }}",
-      );
+      expect(workflow).not.toContain("${{ runner.temp }}");
+      expect(workflow).not.toContain("node-version-file:");
+      expect(workflow).not.toContain("cache-dependency-path:");
+      expect(workflow).not.toMatch(/^\s+cache:\s/m);
       expect(workflow).not.toMatch(
         /repository:\s*Kuanhao-Chao\/DeepGeno\.watch\s*$/m,
       );
@@ -98,19 +109,39 @@ describe("private operations companion template", () => {
       expect(workflow).not.toContain("DEEPGENO_GITHUB_TOKEN");
       expect(workflow).not.toContain("|| github.token");
       for (const job of workflowJobBlocks(workflow)) {
-        expect(job).toContain(
-          "DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine",
-        );
-        expect(job).toContain("DEEPGENO_STATE_ROOT: ${{ github.workspace }}");
+        const jobHeader = job.split(/^    steps:\s*$/m)[0];
+        expect(jobHeader).not.toContain("${{ runner.");
+        expect(jobHeader).not.toContain("DEEPGENO_PROJECT_ROOT:");
+        expect(jobHeader).not.toContain("DEEPGENO_STATE_ROOT:");
         expect(job).toContain("uses: actions/checkout@v6");
         expect(job).toContain("repository: Kuanhao-Chao/DeepGeno.watch-state");
         expect(job).toContain("ref: main");
+        expect(job).toContain("id: bootstrap-engine");
         expect(job).toContain("uses: ./.github/actions/bootstrap-engine");
+        expect(job).toContain(
+          "node-version: ${{ steps.bootstrap-engine.outputs.node-version }}",
+        );
         expect(job).toContain("run: npm ci");
+        expect(job).toContain(
+          "working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}",
+        );
         expect(job).toContain(
           'node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs"',
         );
       }
+    }
+
+    const automationSteps = workflows.flatMap((workflow) =>
+      workflowStepBlocks(workflow).filter((step) =>
+        step.includes("automation.mjs"),
+      ),
+    );
+    expect(automationSteps).toHaveLength(12);
+    for (const step of automationSteps) {
+      expect(step).toContain(
+        "DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}",
+      );
+      expect(step).toContain("DEEPGENO_STATE_ROOT: ${{ github.workspace }}");
     }
 
     for (const command of [
@@ -129,13 +160,17 @@ describe("private operations companion template", () => {
     }
     expect(joined).not.toMatch(/run:\s*node scripts\/github\/automation\.mjs/);
     expect(joined).toContain(
-      "working-directory: ${{ runner.temp }}/deepgeno-engine",
+      "working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}",
     );
   });
 
   it("preserves bounded ingestion controls and a secret-free trusted-main review", async () => {
     const ingest = await template(".github/workflows/ingest.yml");
     const triage = await template(".github/workflows/triage.yml");
+    const automation = await readFile(
+      path.resolve("scripts/github/automation.mjs"),
+      "utf8",
+    );
 
     for (const marker of [
       'cron: "17 6 * * *"',
@@ -152,11 +187,26 @@ describe("private operations companion template", () => {
     ]) {
       expect(ingest, marker).toContain(marker);
     }
+    expect(triage).toContain("pull_request_target:");
+    expect(triage).not.toMatch(/^\s+pull_request:\s*$/m);
     expect(triage).toContain("persist-credentials: false");
+    expect(triage).toContain("repository: Kuanhao-Chao/DeepGeno.watch-state");
+    expect(triage).toContain("ref: main");
     expect(triage).not.toContain("create-github-app-token");
     expect(triage).not.toContain("${{ secrets.");
     expect(triage).not.toContain("OPENAI_API_KEY");
     expect(triage).not.toContain("ANTHROPIC_API_KEY");
+    expect(triage).not.toContain("github.head_ref");
+    expect(triage).not.toContain("refs/pull/");
+    expect(triage).not.toMatch(
+      /github\.event\.pull_request\.(?:head|merge_commit_sha)/,
+    );
+    for (const step of workflowStepBlocks(triage)) {
+      const run = /^\s+run:\s*[|>]?\s*$(?<body>[\s\S]*)/m.exec(step)?.groups
+        ?.body;
+      if (run) expect(run).not.toContain("${{ github.event");
+    }
+    expect(automation).toContain("readEvent(process.env.GITHUB_EVENT_PATH)");
   });
 
   it("mints one-repository least-permission App tokens with the v3 client-ID contract", async () => {
@@ -200,7 +250,7 @@ describe("private operations companion template", () => {
           permissionLines(block).join(",") ===
           "contents:write,issues:write,pull-requests:write",
       ),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(
       privateBlocks.filter(
         (block) => permissionLines(block).join(",") === "contents:write",
@@ -210,18 +260,23 @@ describe("private operations companion template", () => {
       privateBlocks.filter(
         (block) => permissionLines(block).join(",") === "contents:read",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
 
     const publicBlocks = blocks.filter((block) =>
       /repositories: DeepGeno\.watch\s/m.test(block),
     );
-    expect(permissionLines(publicBlocks[0])).toEqual([
-      "contents:write",
-      "pull-requests:write",
-    ]);
-    expect(permissionLines(publicBlocks[1])).toEqual(["contents:read"]);
+    for (const block of publicBlocks) {
+      expect(permissionLines(block)).toEqual([
+        "contents:write",
+        "pull-requests:write",
+      ]);
+    }
 
-    expect(preflight).toContain("gh api --paginate /installation/repositories");
+    expect(
+      occurrences(preflight, "gh api --paginate /installation/repositories"),
+    ).toBe(2);
+    expect(preflight).not.toContain("--method");
+    expect(preflight).not.toMatch(/gh api\s+(?:-X|--input|-f\s|--field)/);
     expect(preflight).toContain('[[ "${#repositories[@]}" -eq 1 ]]');
     expect(preflight).toContain(
       '[[ "${repositories[0]}" == "$EXPECTED_REPOSITORY" ]]',
@@ -330,6 +385,12 @@ function workflowJobBlocks(value: string): string[] {
   return jobs
     .split(/(?=^  [a-z][a-z0-9-]+:\s*$)/m)
     .filter((block) => /^  [a-z][a-z0-9-]+:\s*$/m.test(block));
+}
+
+function workflowStepBlocks(value: string): string[] {
+  return value
+    .split(/(?=^      - )/m)
+    .filter((block) => /^      - /m.test(block));
 }
 
 function references(value: string, pattern: RegExp): string[] {

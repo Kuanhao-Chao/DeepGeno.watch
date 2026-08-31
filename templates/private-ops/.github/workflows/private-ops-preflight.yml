@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
       - name: Bootstrap pinned public engine
         uses: ./.github/actions/bootstrap-engine
-      - name: Mint read-only private repository token
+      - name: Mint production-scope private repository token
         id: private-app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -29,7 +29,9 @@ jobs:
           private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
           owner: Kuanhao-Chao
           repositories: DeepGeno.watch-state
-          permission-contents: read
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
       - name: Verify private token repository set
         shell: bash
         run: |
@@ -43,7 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
           EXPECTED_REPOSITORY: Kuanhao-Chao/DeepGeno.watch-state
-      - name: Mint read-only public repository token
+      - name: Mint production-scope public repository token
         id: public-app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -51,7 +53,8 @@ jobs:
           private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
           owner: Kuanhao-Chao
           repositories: DeepGeno.watch
-          permission-contents: read
+          permission-contents: write
+          permission-pull-requests: write
       - name: Verify public token repository set
         shell: bash
         run: |

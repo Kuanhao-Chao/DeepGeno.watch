@@ -1,7 +1,11 @@
 import {
+  access,
+  copyFile,
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -123,6 +127,160 @@ describe("private operations renderer", () => {
     expect(await renderedStaticBytes(destination)).toEqual(staticBefore);
   });
 
+  it("preserves arbitrary regular private runtime bytes across rerun and repin", async () => {
+    const destination = await destinationPath();
+    expect(render(destination, commitA).status).toBe(0);
+    const nested = path.join(
+      destination,
+      "data/private/deliveries/nested/runtime.bin",
+    );
+    const rootState = path.join(destination, "data/private/state.json");
+    await mkdir(path.dirname(nested), { recursive: true });
+    await writeFile(nested, Buffer.from([0, 255, 10, 13, 42]));
+    await writeFile(rootState, '{"private":true}\n', "utf8");
+    const before = await runtimeBytes(destination, [nested, rootState]);
+
+    expect(render(destination, commitA).status).toBe(0);
+    expect(await runtimeBytes(destination, [nested, rootState])).toEqual(
+      before,
+    );
+    expect(render(destination, commitB, ["--repin"]).status).toBe(0);
+    expect(await runtimeBytes(destination, [nested, rootState])).toEqual(
+      before,
+    );
+  });
+
+  it("recovers an exact interrupted static copy and fills only missing files", async () => {
+    const destination = await destinationPath();
+    const partial = [".gitignore", ".github/workflows/ingest.yml"];
+    for (const relative of partial) {
+      const target = path.join(destination, relative);
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyFile(path.resolve("templates/private-ops", relative), target);
+    }
+
+    const result = render(destination, commitA);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(await renderedStaticBytes(destination)).toEqual(
+      await renderedStaticBytes(path.resolve("templates/private-ops")),
+    );
+  });
+
+  it("validates all partial static bytes before creating any missing file", async () => {
+    const destination = await destinationPath();
+    await mkdir(destination, { recursive: true });
+    await copyFile(
+      path.resolve("templates/private-ops/.gitignore"),
+      path.join(destination, ".gitignore"),
+    );
+    await writeFile(path.join(destination, "README.md"), "drift\n");
+    const missing = path.join(
+      destination,
+      ".github/actions/bootstrap-engine/action.yml",
+    );
+
+    const result = render(destination, commitA);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Static template drift");
+    await expect(access(missing)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("validates an existing lock before recovering a partial skeleton", async () => {
+    const destination = await destinationPath();
+    await mkdir(destination, { recursive: true });
+    await copyFile(
+      path.resolve("templates/private-ops/.gitignore"),
+      path.join(destination, ".gitignore"),
+    );
+    const drift = `{"repository":"${publicRepository}","commit":"${commitA}"}\n`;
+    await writeFile(path.join(destination, "engine.lock.json"), drift, "utf8");
+    const missing = path.join(
+      destination,
+      ".github/actions/bootstrap-engine/action.yml",
+    );
+
+    const result = render(destination, commitB, ["--repin"]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("deterministic bytes");
+    await expect(access(missing)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      await readFile(path.join(destination, "engine.lock.json"), "utf8"),
+    ).toBe(drift);
+  });
+
+  it("rejects noncanonical existing lock bytes before repinning", async () => {
+    const destination = await destinationPath();
+    expect(render(destination, commitA).status).toBe(0);
+    const lock = path.join(destination, "engine.lock.json");
+    const drift = `{"repository":"${publicRepository}","commit":"${commitA}","commit":"${commitA}"}\n`;
+    await writeFile(lock, drift, "utf8");
+
+    const result = render(destination, commitB, ["--repin"]);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("deterministic bytes");
+    expect(await readFile(lock, "utf8")).toBe(drift);
+  });
+
+  it("rejects an existing symlink destination and a missing leaf below a symlink", async () => {
+    const existingRoot = await temporaryRoot();
+    const existingReal = path.join(existingRoot, "real");
+    const existingLink = path.join(existingRoot, "state-link");
+    await mkdir(existingReal);
+    await symlink(existingReal, existingLink);
+
+    const existing = render(existingLink, commitA);
+    expect(existing.status).not.toBe(0);
+    expect(existing.stderr).toContain("symlink");
+    await expect(
+      access(path.join(existingReal, "engine.lock.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const missingRoot = await temporaryRoot();
+    const missingReal = path.join(missingRoot, "real-parent");
+    const missingLink = path.join(missingRoot, "linked-parent");
+    await mkdir(missingReal);
+    await symlink(missingReal, missingLink);
+    const missingDestination = path.join(missingLink, "state");
+
+    const missing = render(missingDestination, commitA);
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain("ancestor must not be a symlink");
+    await expect(access(path.join(missingReal, "state"))).rejects.toMatchObject(
+      {
+        code: "ENOENT",
+      },
+    );
+  });
+
+  it("rejects special files in private runtime state and Git metadata", async () => {
+    const runtimeDestination = await destinationPath();
+    expect(render(runtimeDestination, commitA).status).toBe(0);
+    const runtimePipe = path.join(
+      runtimeDestination,
+      "data/private/runtime.pipe",
+    );
+    const runtimeMkfifo = spawnSync("mkfifo", [runtimePipe], {
+      encoding: "utf8",
+    });
+    expect(runtimeMkfifo.status, runtimeMkfifo.stderr).toBe(0);
+    const runtime = render(runtimeDestination, commitA);
+    expect(runtime.status).not.toBe(0);
+    expect(runtime.stderr).toContain("regular file or directory");
+
+    const gitDestination = await destinationPath();
+    expect(render(gitDestination, commitA).status).toBe(0);
+    const gitPipe = path.join(gitDestination, ".git");
+    const gitMkfifo = spawnSync("mkfifo", [gitPipe], { encoding: "utf8" });
+    expect(gitMkfifo.status, gitMkfifo.stderr).toBe(0);
+    const git = render(gitDestination, commitA);
+    expect(git.status).not.toBe(0);
+    expect(git.stderr).toContain("Git metadata must be a real directory");
+  });
+
   it("rejects malformed, wrong-repository, and symlinked existing locks", async () => {
     const malformedDestination = await destinationPath();
     expect(render(malformedDestination, commitA).status).toBe(0);
@@ -157,9 +315,15 @@ describe("private operations renderer", () => {
 });
 
 async function destinationPath(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "deepgeno-private-ops-"));
-  roots.push(root);
+  const root = await temporaryRoot();
   return path.join(root, "state");
+}
+
+async function temporaryRoot(): Promise<string> {
+  const canonicalTemp = await realpath(tmpdir());
+  const root = await mkdtemp(path.join(canonicalTemp, "deepgeno-private-ops-"));
+  roots.push(root);
+  return root;
 }
 
 function render(destination: string, commit: string, extra: string[] = []) {
@@ -201,4 +365,18 @@ async function snapshot(root: string): Promise<Record<string, string>> {
       "utf8",
     ),
   };
+}
+
+async function runtimeBytes(
+  root: string,
+  absolutePaths: string[],
+): Promise<Record<string, Buffer>> {
+  return Object.fromEntries(
+    await Promise.all(
+      absolutePaths.map(async (absolute) => [
+        path.relative(root, absolute),
+        await readFile(absolute),
+      ]),
+    ),
+  );
 }

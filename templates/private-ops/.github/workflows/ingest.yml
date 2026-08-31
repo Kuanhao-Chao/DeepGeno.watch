@@ -46,9 +46,6 @@ jobs:
     name: Discover and open Gate 1
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Mint private-state token
         id: private-app-token
@@ -69,21 +66,25 @@ jobs:
           token: ${{ steps.private-app-token.outputs.token }}
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Confirm private repository boundary
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" assert-private
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
       - name: Discover papers
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" ingest
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_FROM: ${{ inputs.from }}

@@ -1,10 +1,19 @@
 name: Bootstrap pinned DeepGeno engine
 description: Validate the private state root and fetch its exact trusted public-engine pin
 
+outputs:
+  project-root:
+    description: Canonical absolute root of the detached public engine
+    value: ${{ steps.bootstrap.outputs.project-root }}
+  node-version:
+    description: Canonical supported Node.js version from the pinned engine
+    value: ${{ steps.bootstrap.outputs.node-version }}
+
 runs:
   using: composite
   steps:
     - name: Validate roots, lock, and pinned engine
+      id: bootstrap
       shell: bash
       run: |
         set -euo pipefail
@@ -16,6 +25,7 @@ runs:
 
         [[ -n "${GITHUB_WORKSPACE:-}" ]] || fail "GITHUB_WORKSPACE is required"
         [[ -n "${RUNNER_TEMP:-}" ]] || fail "RUNNER_TEMP is required"
+        [[ -n "${GITHUB_OUTPUT:-}" ]] || fail "GITHUB_OUTPUT is required"
         [[ -d "$GITHUB_WORKSPACE" && ! -L "$GITHUB_WORKSPACE" ]] || fail "GITHUB_WORKSPACE must be a real directory"
         [[ -d "$RUNNER_TEMP" && ! -L "$RUNNER_TEMP" ]] || fail "RUNNER_TEMP must be a real directory"
 
@@ -101,5 +111,22 @@ runs:
         do
           [[ -f "$engine_root/$required" && ! -L "$engine_root/$required" ]] || fail "pinned engine is missing required file: $required"
         done
+
+        node_version="$(node --input-type=module - "$engine_root/.nvmrc" <<'NODE'
+        import { readFileSync } from "node:fs";
+
+        const supportedNodeVersion = "22.18.0";
+        const bytes = readFileSync(process.argv[2], "utf8");
+        if (bytes !== `${supportedNodeVersion}\n`) {
+          throw new Error(`.nvmrc must contain exactly ${supportedNodeVersion} followed by one newline`);
+        }
+        process.stdout.write(supportedNodeVersion);
+        NODE
+        )"
+
+        {
+          echo "project-root=$engine_root"
+          echo "node-version=$node_version"
+        } >> "$GITHUB_OUTPUT"
 
         echo "Pinned public engine $commit is ready at $engine_root"

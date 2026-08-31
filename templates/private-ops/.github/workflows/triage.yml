@@ -1,7 +1,7 @@
 name: Literature review validation
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [opened, edited, synchronize, reopened, labeled, unlabeled]
 
@@ -20,9 +20,6 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'summary-review')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      DEEPGENO_PROJECT_ROOT: ${{ runner.temp }}/deepgeno-engine
-      DEEPGENO_STATE_ROOT: ${{ github.workspace }}
     steps:
       - name: Check out trusted private main, never the pull-request head
         uses: actions/checkout@v6
@@ -32,17 +29,18 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Bootstrap pinned public engine
+        id: bootstrap-engine
         uses: ./.github/actions/bootstrap-engine
       - name: Set up pinned Node.js
         uses: actions/setup-node@v6
         with:
-          node-version-file: ${{ runner.temp }}/deepgeno-engine/.nvmrc
-          cache: npm
-          cache-dependency-path: ${{ runner.temp }}/deepgeno-engine/package-lock.json
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
       - name: Install pinned engine dependencies
         run: npm ci
-        working-directory: ${{ runner.temp }}/deepgeno-engine
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
       - name: Validate immutable markers and bounded choices
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" triage-check
         env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
           DEEPGENO_MAX_SUMMARIES_PER_RUN: ${{ vars.DEEPGENO_MAX_SUMMARIES_PER_RUN || '20' }}
