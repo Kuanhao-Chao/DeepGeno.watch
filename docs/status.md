@@ -16,7 +16,9 @@ merged/validated.
 - `https://deepgeno-watch.khchao.workers.dev` serves the static site and a valid empty
   `/catalog.json` (`schemaVersion: 1.0`, zero papers).
 - The existing `deepgeno-watch` Worker, URL, asset-only `wrangler.jsonc`, build commands,
-  build variables, preview configuration, and Git connection remain intact.
+  build variables, preview configuration, and Git connection remain intact. Preview
+  URL Access is pending and unverified; no Cloudflare mutation or live Access-policy
+  evidence was produced by this branch.
 - The remote `Kuanhao-Chao/DeepGeno.watch-state` repository does not yet exist. No App,
   secret, environment, ruleset, live operation, or production data was created from
   this implementation branch.
@@ -79,8 +81,10 @@ merged/validated.
    discovery, and require zero source issues. If the selected paper is absent, stop.
 6. Carry only the approved paper through private Gate 1 and Gate 2, create the one-file
    public PR, and wait for human merge.
-7. Verify production catalog growth from zero to one and Access-protected previews.
-   Enable scheduled private ingestion only after that publication succeeds.
+7. Explicitly enable Cloudflare Access for Worker Preview URLs, then verify the intended
+   reviewer can enter and an unauthenticated request is denied. Verify production
+   catalog growth from zero to one. Enable scheduled private ingestion only after that
+   publication succeeds.
 
 ## Known provisioning limits
 

@@ -75,8 +75,10 @@ public-only token and an exact-head compare-and-swap.
   and exact long text from private fixtures.
 - CSP, framing, MIME-sniffing, referrer, permissions, and cache headers ship in
   `apps/web/public/_headers`.
-- Production `workers.dev` remains public; Worker preview URLs are protected through
-  Cloudflare Access.
+- Production `workers.dev` remains public. Worker Preview URL Access is pending and
+  unverified because this branch made no Cloudflare change; activation must explicitly
+  enable Access for the intended reviewer policy and verify that an unauthenticated
+  preview request is denied.
 
 The companion renderer is a provisioning tool for a standard clone on one filesystem
 under one trusted operator. It rejects symlinked paths and linked-worktree `.git` files.

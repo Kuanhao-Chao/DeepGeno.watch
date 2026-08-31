@@ -94,8 +94,10 @@ path.
 
 Public `main` requires a pull request and `CI / verify`, without an App bypass. The
 existing `deepgeno-watch` Worker watches only the public repository and deploys human-
-merged public content. Preview Access and deployment acceptance remain Cloudflare
-controls, but the conditional Cloudflare check is not a universal branch-rule context.
+merged public content. Preview Access is an explicit, still-unverified activation
+control: enable it and verify both authorized and unauthenticated behavior. Deployment
+acceptance also remains a Cloudflare control, but the conditional Cloudflare check is
+not a universal branch-rule context.
 
 ## Source and evidence strategy
 

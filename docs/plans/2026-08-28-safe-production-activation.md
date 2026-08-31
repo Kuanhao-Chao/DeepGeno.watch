@@ -49,6 +49,6 @@ Run the complete local verification suite, a populated public fixture build, wor
 
 After code is safely integrated and remote actions are authorized, provision the private companion, probe the configured OpenAI model without summary generation, and run discovery with `from=2026-08-28`, `through=2026-08-28`, `batch_days=1`, `backfill_days=0`, `mode=manual`, and `shadow=false`. Require zero source issues. Summarize only `paper-1aeb281eb0343b8b`; defer the nine approved candidates for seven days; dismiss the four approved off-focus candidates. Unknown new candidates defer seven days. If the selected paper is absent, stop before synthesis.
 
-Carry the selected paper through private Gate 1 and Gate 2, then create a one-file public PR. Human merges remain required. Verify the production catalog grows from zero to one and previews remain Access-protected. Enable daily private ingestion only after the first production publication succeeds.
+Carry the selected paper through private Gate 1 and Gate 2, then create a one-file public PR. Human merges remain required. Explicitly enable Cloudflare Access for preview URLs, verify both authorized reviewer entry and unauthenticated denial, and verify the production catalog grows from zero to one. Enable daily private ingestion only after the first production publication succeeds.
 
 Protect public `main` with pull-request-only updates and required `verify`; do not require the conditional Cloudflare check because build-watch paths may legitimately omit it.

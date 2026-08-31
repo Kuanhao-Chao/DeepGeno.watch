@@ -213,6 +213,53 @@ read_visible() {
   printf -v "$variable_name" '%s' "$value"
 }
 
+is_exact_public_repository_metadata() {
+  [[ "$1" == "Kuanhao-Chao/DeepGeno.watch" &&
+    "$2" == "false" &&
+    "$3" == "false" &&
+    "$4" == "false" &&
+    "$5" == "main" ]]
+}
+
+validate_public_repository() {
+  local metadata public_full_name public_private public_fork public_archived public_default_branch
+  metadata="$(gh api "repos/$PUBLIC_REPOSITORY" --jq '[.full_name, .private, .fork, .archived, (.default_branch // "")] | @tsv')" || abort "Unable to read the public repository metadata."
+  IFS=$'\t' read -r public_full_name public_private public_fork public_archived public_default_branch <<< "$metadata"
+  is_exact_public_repository_metadata \
+    "$public_full_name" \
+    "$public_private" \
+    "$public_fork" \
+    "$public_archived" \
+    "$public_default_branch" || abort "The public repository must be exactly Kuanhao-Chao/DeepGeno.watch, public, non-fork, unarchived, with default branch main."
+}
+
+has_exact_remote_url() {
+  local expected_url="$1"
+  shift
+  [[ "$#" -eq 1 && "$1" == "$expected_url" ]]
+}
+
+is_exact_initial_seed_status() {
+  local seed_status="$1" expected_path="" line_count=""
+  local all_untracked="true" all_staged="true"
+  shift
+
+  [[ "$#" -gt 0 ]] || return 1
+  line_count="$(printf '%s\n' "$seed_status" | awk 'NF { count += 1 } END { print count + 0 }')"
+  [[ "$line_count" -eq "$#" ]] || return 1
+
+  for expected_path in "$@"; do
+    if [[ "$seed_status"$'\n' != *"?? $expected_path"$'\n'* ]]; then
+      all_untracked="false"
+    fi
+    if [[ "$seed_status"$'\n' != *"A  $expected_path"$'\n'* ]]; then
+      all_staged="false"
+    fi
+  done
+
+  [[ "$all_untracked" == "true" || "$all_staged" == "true" ]]
+}
+
 validate_state_repository() {
   local metadata
   metadata="$(gh api "repos/$STATE_REPOSITORY" --jq '[.full_name, .private, .fork, .archived, (.default_branch // "")] | @tsv')" || abort "Unable to read the private companion metadata."
@@ -284,6 +331,7 @@ AUTHENTICATED_LOGIN="$(gh api user --jq .login)"
 [[ "$AUTHENTICATED_LOGIN" == "Kuanhao-Chao" ]] || abort "GitHub CLI must be authenticated as Kuanhao-Chao."
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$NODE_MAJOR" =~ ^[0-9]+$ && "$NODE_MAJOR" -ge 22 ]] || abort "Node.js 22 or newer is required."
+validate_public_repository
 say "✓ GitHub CLI capabilities, authentication, Git, and Node.js passed."
 
 stage "Create or validate the private companion"
@@ -300,6 +348,7 @@ else
 fi
 unset STATE_LOOKUP
 validate_state_repository
+GIT_TERMINAL_PROMPT=0 git ls-remote "$STATE_ORIGIN" >/dev/null 2>&1 || abort "HTTPS access to the private companion failed. Follow GitHub's HTTPS cloning credential guidance manually outside this wizard, then rerun; this wizard does not alter Git authentication."
 say "Never connect $STATE_REPOSITORY to Cloudflare. Cloudflare stays connected only to $PUBLIC_REPOSITORY."
 confirm "Confirm the companion is private and will never be Cloudflare-connected." || abort "Repository boundary was not confirmed."
 
@@ -310,8 +359,19 @@ PUBLIC_PARENT="$(dirname -- "$PUBLIC_ROOT")"
 STATE_ROOT="$PUBLIC_PARENT/DeepGeno.watch-state"
 
 [[ "$(git -C "$PUBLIC_ROOT" rev-parse --show-toplevel)" == "$PUBLIC_ROOT" ]] || abort "Run this wizard from the canonical public repository checkout."
-PUBLIC_CONFIGURED_ORIGIN="$(git -C "$PUBLIC_ROOT" remote get-url origin)"
-if [[ "$PUBLIC_CONFIGURED_ORIGIN" != "$PUBLIC_HTTPS_ORIGIN" && "$PUBLIC_CONFIGURED_ORIGIN" != "$PUBLIC_SSH_ORIGIN" ]]; then abort "The public checkout origin must name exactly $PUBLIC_REPOSITORY."; fi
+PUBLIC_FETCH_URL_OUTPUT="$(git -C "$PUBLIC_ROOT" remote get-url --all origin)" || abort "Unable to enumerate the public checkout origin URLs."
+PUBLIC_FETCH_URLS=()
+while IFS= read -r configured_url; do
+  if [[ -n "$configured_url" ]]; then
+    PUBLIC_FETCH_URLS[${#PUBLIC_FETCH_URLS[@]}]="$configured_url"
+  fi
+done <<< "$PUBLIC_FETCH_URL_OUTPUT"
+unset PUBLIC_FETCH_URL_OUTPUT configured_url
+if ! has_exact_remote_url "$PUBLIC_HTTPS_ORIGIN" "${PUBLIC_FETCH_URLS[@]}" &&
+  ! has_exact_remote_url "$PUBLIC_SSH_ORIGIN" "${PUBLIC_FETCH_URLS[@]}"; then
+  abort "The public checkout must have exactly one origin URL naming $PUBLIC_REPOSITORY."
+fi
+unset PUBLIC_FETCH_URLS
 [[ -z "$(git -C "$PUBLIC_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || abort "The public checkout must be clean."
 PUBLIC_HEAD="$(git -C "$PUBLIC_ROOT" rev-parse --verify 'HEAD^{commit}')"
 PIN="$(gh api "repos/$PUBLIC_REPOSITORY/commits/main" --jq .sha)"
@@ -329,10 +389,27 @@ STATE_CANONICAL="$(cd -- "$STATE_ROOT" && pwd -P)"
 [[ -d "$STATE_ROOT/.git" ]] || abort "The companion must be a standard clone with a real .git directory; linked worktrees are unsupported."
 [[ ! -L "$STATE_ROOT/.git" ]] || abort "The companion .git directory must not be a symlink."
 [[ "$(git -C "$STATE_ROOT" rev-parse --show-toplevel)" == "$STATE_ROOT" ]] || abort "The sibling path is not the companion Git root."
-STATE_CONFIGURED_ORIGIN="$(git -C "$STATE_ROOT" remote get-url origin)"
-[[ "$STATE_CONFIGURED_ORIGIN" == "$STATE_ORIGIN" ]] || abort "The companion origin must be exactly $STATE_ORIGIN."
-STATE_CONFIGURED_PUSH_ORIGIN="$(git -C "$STATE_ROOT" remote get-url --push origin)"
-[[ "$STATE_CONFIGURED_PUSH_ORIGIN" == "$STATE_ORIGIN" ]] || abort "The companion push origin must be exactly $STATE_ORIGIN."
+STATE_FETCH_URL_OUTPUT="$(git -C "$STATE_ROOT" remote get-url --all origin)" || abort "Unable to enumerate companion fetch URLs."
+STATE_FETCH_URLS=()
+while IFS= read -r configured_url; do
+  if [[ -n "$configured_url" ]]; then
+    STATE_FETCH_URLS[${#STATE_FETCH_URLS[@]}]="$configured_url"
+  fi
+done <<< "$STATE_FETCH_URL_OUTPUT"
+unset STATE_FETCH_URL_OUTPUT configured_url
+has_exact_remote_url "$STATE_ORIGIN" "${STATE_FETCH_URLS[@]}" || abort "The companion must have exactly one fetch URL, equal to $STATE_ORIGIN."
+unset STATE_FETCH_URLS
+
+STATE_PUSH_URL_OUTPUT="$(git -C "$STATE_ROOT" remote get-url --all --push origin)" || abort "Unable to enumerate companion push URLs."
+STATE_PUSH_URLS=()
+while IFS= read -r configured_url; do
+  if [[ -n "$configured_url" ]]; then
+    STATE_PUSH_URLS[${#STATE_PUSH_URLS[@]}]="$configured_url"
+  fi
+done <<< "$STATE_PUSH_URL_OUTPUT"
+unset STATE_PUSH_URL_OUTPUT configured_url
+has_exact_remote_url "$STATE_ORIGIN" "${STATE_PUSH_URLS[@]}" || abort "The companion must have exactly one push URL, equal to $STATE_ORIGIN."
+unset STATE_PUSH_URLS
 
 if git -C "$STATE_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   [[ -z "$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || abort "The companion checkout must be clean before rendering."
@@ -362,11 +439,7 @@ else
   git -C "$STATE_ROOT" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || abort "Configure a Git author identity manually, then rerun the wizard."
   render_pin
   SEED_STATUS="$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)"
-  for path_to_seed in "${SEED_PATHS[@]}"; do
-    [[ "$SEED_STATUS"$'\n' == *"?? $path_to_seed"$'\n'* ]] || abort "Initial render is missing $path_to_seed."
-  done
-  SEED_LINE_COUNT="$(printf '%s\n' "$SEED_STATUS" | awk 'NF { count += 1 } END { print count + 0 }')"
-  [[ "$SEED_LINE_COUNT" -eq "${#SEED_PATHS[@]}" ]] || abort "Initial render contains a path outside the nine-file seed allowlist."
+  is_exact_initial_seed_status "$SEED_STATUS" "${SEED_PATHS[@]}" || abort "Initial render must contain either all nine exact untracked seed paths or all nine exact staged additions, with no mixed, modified, or extra path."
   confirm "Commit exactly the nine rendered seed files and non-force push main?" || abort "Rendered files remain local and uncommitted."
   git -C "$STATE_ROOT" add -- "${SEED_PATHS[@]}"
   git -C "$STATE_ROOT" commit -m "chore(operations): seed private companion"

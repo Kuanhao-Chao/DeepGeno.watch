@@ -207,3 +207,94 @@ skipped. No alternative shell linter was installed or fetched.
 - A failed network push after a successful local seed/repin commit remains visible and
   must be resolved without force before rerunning; the wizard never resets or cleans an
   operator checkout.
+
+## Scoped review fix round 1 (2026-08-31)
+
+Independent review of `faeda0c..de1103a` found three Important setup-boundary gaps:
+
+1. The wizard inspected only one companion fetch URL and one effective push URL, so an
+   additional configured URL was not ruled out.
+2. It did not validate the fixed public repository's visibility, fork/archive state,
+   and default branch before the first possible repository mutation.
+3. Security/status prose asserted that Preview URL Access was active without a
+   Cloudflare mutation or live policy evidence.
+
+The same review recorded two Minor recovery/usability gaps: an exact nine-file staged
+initial seed could not resume after interruption, and cloning an empty private
+companion could reach an interactive HTTPS credential prompt without an earlier access
+check. The fix round is recorded as
+`de1103aac1499ecca7b8ccc1e05fd4f30c92239b..FIX_COMMIT_PENDING`; the resulting commit
+SHA is reported in the handoff because a commit cannot contain its own identity.
+
+### Fix-round RED evidence
+
+The first focused run added behavioral/model tests before changing the wizard:
+
+```text
+npm test -- scripts/setup-private-ops.test.ts
+
+Test Files  1 failed (1)
+Tests       4 failed | 9 passed (13)
+Expected causes: no pre-mutation public metadata validator; no all-fetch/all-push URL
+enumeration; no private HTTPS access probe; and no exact staged-seed recovery helper.
+```
+
+After the initial implementation, a separate test-first correction required the access
+probe to be non-interactive:
+
+```text
+npm test -- scripts/setup-private-ops.test.ts
+
+Test Files  1 failed (1)
+Tests       1 failed | 12 passed (13)
+Expected cause: the probe lacked GIT_TERMINAL_PROMPT=0.
+```
+
+### Fix-round implementation and GREEN evidence
+
+- Public repository metadata is queried and must equal the fixed full name with
+  `private=false`, `fork=false`, `archived=false`, and `default_branch=main` before
+  `gh repo create` can run. Behavioral Bash tests reject each unsafe tuple.
+- Bash 3.2 code enumerates every public fetch URL and every companion fetch and push
+  URL with `git remote get-url --all` / `--all --push`; exactly one allowed URL must
+  remain. The real validator rejects empty, mismatched, and additional URL sets.
+- After companion metadata validation and before clone/render, the wizard runs
+  `GIT_TERMINAL_PROMPT=0 git ls-remote` without `--exit-code`, so an authenticated empty
+  repository succeeds and missing HTTPS credentials stop with manual outside-wizard
+  guidance rather than prompting for a token.
+- Initial seed recovery accepts only all nine exact untracked entries or all nine exact
+  staged additions. An integration-style temporary Git repository proves untracked and
+  staged recovery while rejecting mixed and extra state; the subsequent `git add`
+  remains exact-path-only.
+- Architecture, Cloudflare, security, status, and activation-plan documentation now
+  record Preview URL Access as pending/unverified and require activation to enable it
+  and verify both an authorized reviewer and denial of an unauthenticated request.
+
+```text
+npm test -- scripts/setup-private-ops.test.ts \
+  scripts/github/private-ops-template.test.ts \
+  scripts/github/render-private-ops.test.ts
+
+Test Files  3 passed (3)
+Tests       39 passed (39)
+```
+
+```text
+npm run check
+
+Astro check: 0 errors, 0 warnings, 0 hints
+Contracts/literature TypeScript: passed
+Vitest: 18 files, 185 tests passed
+Astro static build: passed (expected empty-paper collection notices)
+Static artifact check: 11 files passed
+Privacy check: 26 build files passed
+Wrangler 4.127.0 dry-run: passed with no bindings and no deployment
+```
+
+The macOS system Bash used for the helper behavior and syntax checks is 3.2.57.
+`bash -n` passed; the canonical prefix remains one marker, 7,206 bytes, SHA-256
+`36ddf7aa3a7da152768664bddc48451a6a738f44840eb94e1c5cb014c531c02d`, mode 0755.
+All 15 YAML files and 27 embedded Bash run blocks parsed successfully. Prettier and Git
+whitespace checks passed. `shellcheck` remains unavailable, so its optional check was
+reported and skipped. No wizard, remote, GitHub, Cloudflare, or production mutation
+occurred. Fresh scoped re-review of this fix remains the next gate.

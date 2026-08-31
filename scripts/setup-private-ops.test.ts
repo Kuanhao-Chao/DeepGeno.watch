@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
@@ -99,6 +107,44 @@ describe("private companion setup wizard", () => {
     }
   });
 
+  it("rejects unsafe public repository metadata before the first mutation", async () => {
+    const stages = await wizardStages();
+    const mutation = stages.indexOf(`gh repo create "$STATE_REPOSITORY"`);
+    const preflightStage = stages.indexOf(
+      'stage "Preflight GitHub CLI and account"',
+    );
+    const validation = stages.indexOf(
+      "\nvalidate_public_repository\n",
+      preflightStage,
+    );
+
+    expect(validation).toBeGreaterThan(0);
+    expect(validation).toBeLessThan(mutation);
+    expect(stages).toContain(
+      `gh api "repos/$PUBLIC_REPOSITORY" --jq '[.full_name, .private, .fork, .archived, (.default_branch // "")] | @tsv'`,
+    );
+
+    const valid = [publicRepository, "false", "false", "false", "main"];
+    expect(
+      runBashFunction(stages, "is_exact_public_repository_metadata", valid)
+        .status,
+    ).toBe(0);
+
+    for (const invalid of [
+      [stateRepository, "false", "false", "false", "main"],
+      [publicRepository, "true", "false", "false", "main"],
+      [publicRepository, "false", "true", "false", "main"],
+      [publicRepository, "false", "false", "true", "main"],
+      [publicRepository, "false", "false", "false", "master"],
+    ]) {
+      expect(
+        runBashFunction(stages, "is_exact_public_repository_metadata", invalid)
+          .status,
+        invalid.join("\t"),
+      ).not.toBe(0);
+    }
+  });
+
   it("validates the fixed private repository and seeds only the rendered companion", async () => {
     const stages = await wizardStages();
 
@@ -121,10 +167,16 @@ describe("private companion setup wizard", () => {
       'STATE_ORIGIN="https://github.com/Kuanhao-Chao/DeepGeno.watch-state.git"',
     );
     expect(stages).toContain(
-      'STATE_CONFIGURED_PUSH_ORIGIN="$(git -C "$STATE_ROOT" remote get-url --push origin)"',
+      'git -C "$STATE_ROOT" remote get-url --all origin',
     );
     expect(stages).toContain(
-      '[[ "$STATE_CONFIGURED_PUSH_ORIGIN" == "$STATE_ORIGIN" ]]',
+      'git -C "$STATE_ROOT" remote get-url --all --push origin',
+    );
+    expect(stages).toContain(
+      'has_exact_remote_url "$STATE_ORIGIN" "${STATE_FETCH_URLS[@]}"',
+    );
+    expect(stages).toContain(
+      'has_exact_remote_url "$STATE_ORIGIN" "${STATE_PUSH_URLS[@]}"',
     );
     expect(stages).toContain(
       'PUBLIC_HTTPS_ORIGIN="https://github.com/Kuanhao-Chao/DeepGeno.watch.git"',
@@ -132,10 +184,44 @@ describe("private companion setup wizard", () => {
     expect(stages).toContain(
       'PUBLIC_SSH_ORIGIN="git@github.com:Kuanhao-Chao/DeepGeno.watch.git"',
     );
-    expect(stages).toMatch(
-      /"\$PUBLIC_CONFIGURED_ORIGIN" != "\$PUBLIC_HTTPS_ORIGIN"[^\n]+"\$PUBLIC_CONFIGURED_ORIGIN" != "\$PUBLIC_SSH_ORIGIN"/,
+    expect(stages).toContain(
+      'git -C "$PUBLIC_ROOT" remote get-url --all origin',
     );
+    expect(stages).toContain(
+      'has_exact_remote_url "$PUBLIC_HTTPS_ORIGIN" "${PUBLIC_FETCH_URLS[@]}"',
+    );
+    expect(stages).toContain(
+      'has_exact_remote_url "$PUBLIC_SSH_ORIGIN" "${PUBLIC_FETCH_URLS[@]}"',
+    );
+    expect(stages).not.toContain("mapfile");
     expect(stages).toContain('[[ "$PUBLIC_HEAD" == "$PIN" ]]');
+
+    expect(
+      runBashFunction(stages, "has_exact_remote_url", [
+        "https://github.com/example/repository.git",
+        "https://github.com/example/repository.git",
+      ]).status,
+    ).toBe(0);
+    const noConfiguredUrl = runBashFunction(stages, "has_exact_remote_url", [
+      "https://github.com/example/repository.git",
+    ]);
+    expect(noConfiguredUrl.status).not.toBe(0);
+    expect(noConfiguredUrl.stderr).not.toContain("unbound variable");
+    for (const configured of [
+      [
+        "https://github.com/example/repository.git",
+        "https://attacker.invalid/redirect.git",
+      ],
+      ["https://attacker.invalid/redirect.git"],
+    ]) {
+      expect(
+        runBashFunction(stages, "has_exact_remote_url", [
+          "https://github.com/example/repository.git",
+          ...configured,
+        ]).status,
+        configured.join("\n"),
+      ).not.toBe(0);
+    }
 
     expect(stages).toMatch(
       /node scripts\/github\/render-private-ops\.mjs\s+\\\n\s+--destination "\$STATE_ROOT"\s+\\\n\s+--repository Kuanhao-Chao\/DeepGeno\.watch\s+\\\n\s+--commit "\$PIN"/,
@@ -182,6 +268,97 @@ describe("private companion setup wizard", () => {
     );
     expect(cleanGate).toBeGreaterThan(headBranch);
     expect(cleanGate).toBeLessThan(emptyBranch);
+  });
+
+  it("requires private HTTPS Git access after validation and before clone or render", async () => {
+    const stages = await wizardStages();
+    const companionStage = stages.indexOf(
+      'stage "Create or validate the private companion"',
+    );
+    const stateValidation = stages.indexOf(
+      "\nvalidate_state_repository\n",
+      companionStage,
+    );
+    const accessCheck = stages.indexOf(
+      'GIT_TERMINAL_PROMPT=0 git ls-remote "$STATE_ORIGIN"',
+    );
+    const clone = stages.indexOf('git clone "$STATE_ORIGIN" "$STATE_ROOT"');
+    const firstRender = stages.indexOf("render_pin", clone);
+
+    expect(stateValidation).toBeGreaterThan(0);
+    expect(accessCheck).toBeGreaterThan(stateValidation);
+    expect(accessCheck).toBeLessThan(clone);
+    expect(accessCheck).toBeLessThan(firstRender);
+    expect(stages.slice(accessCheck, clone)).not.toContain("--exit-code");
+    expect(stages.slice(accessCheck, clone)).toContain("HTTPS");
+    expect(stages.slice(accessCheck, clone)).toContain("manually");
+    expect(stages.slice(accessCheck, clone)).toContain("rerun");
+  });
+
+  it("recovers an exactly staged initial seed and rejects mixed or extra Git state", async () => {
+    const stages = await wizardStages();
+    const fixtureRoot = await mkdtemp(
+      path.join(os.tmpdir(), "deepgeno-private-seed-"),
+    );
+
+    try {
+      expect(
+        runGit(fixtureRoot, ["init", "--initial-branch=main"]).status,
+      ).toBe(0);
+      for (const seedPath of expectedSeedPaths) {
+        const absolutePath = path.join(fixtureRoot, seedPath);
+        await mkdir(path.dirname(absolutePath), { recursive: true });
+        await writeFile(absolutePath, "fixture\n", "utf8");
+      }
+
+      const untracked = gitStatus(fixtureRoot);
+      expect(stages).toContain(
+        'is_exact_initial_seed_status "$SEED_STATUS" "${SEED_PATHS[@]}"',
+      );
+      expect(
+        runBashFunction(stages, "is_exact_initial_seed_status", [
+          untracked,
+          ...expectedSeedPaths,
+        ]).status,
+      ).toBe(0);
+
+      expect(
+        runGit(fixtureRoot, ["add", "--", ...expectedSeedPaths]).status,
+      ).toBe(0);
+      const staged = gitStatus(fixtureRoot);
+      expect(staged).toContain("A  engine.lock.json");
+      expect(
+        runBashFunction(stages, "is_exact_initial_seed_status", [
+          staged,
+          ...expectedSeedPaths,
+        ]).status,
+      ).toBe(0);
+
+      expect(
+        runGit(fixtureRoot, ["reset", "--", expectedSeedPaths[0]]).status,
+      ).toBe(0);
+      const mixed = gitStatus(fixtureRoot);
+      expect(
+        runBashFunction(stages, "is_exact_initial_seed_status", [
+          mixed,
+          ...expectedSeedPaths,
+        ]).status,
+      ).not.toBe(0);
+
+      expect(
+        runGit(fixtureRoot, ["add", "--", expectedSeedPaths[0]]).status,
+      ).toBe(0);
+      await writeFile(path.join(fixtureRoot, "unexpected.txt"), "unexpected\n");
+      const extra = gitStatus(fixtureRoot);
+      expect(
+        runBashFunction(stages, "is_exact_initial_seed_status", [
+          extra,
+          ...expectedSeedPaths,
+        ]).status,
+      ).not.toBe(0);
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("routes every workflow variable and secret to its intended scope", async () => {
@@ -429,4 +606,45 @@ function uniqueMatches(source: string, pattern: RegExp): string[] {
   return [
     ...new Set([...source.matchAll(pattern)].map((match) => match[1])),
   ].sort();
+}
+
+function runBashFunction(
+  stages: string,
+  functionName: string,
+  args: string[],
+): ReturnType<typeof spawnSync> {
+  const functionSource = extractBashFunction(stages, functionName);
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      `set -u\n${functionSource}\n${functionName} "$@"`,
+      functionName,
+      ...args,
+    ],
+    { encoding: "utf8" },
+  );
+}
+
+function extractBashFunction(source: string, functionName: string): string {
+  const match = new RegExp(
+    `^${functionName}\\(\\) \\{\\n[\\s\\S]*?^\\}`,
+    "m",
+  ).exec(source);
+  expect(match?.[0], functionName).toBeDefined();
+  return match![0];
+}
+
+function runGit(cwd: string, args: string[]): ReturnType<typeof spawnSync> {
+  return spawnSync("git", args, { cwd, encoding: "utf8" });
+}
+
+function gitStatus(cwd: string): string {
+  const result = runGit(cwd, [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+  ]);
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout.trimEnd();
 }
