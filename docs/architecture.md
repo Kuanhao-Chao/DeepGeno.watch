@@ -2,89 +2,126 @@
 
 ## Chosen shape
 
-DeepGeno.watch uses a TypeScript monorepo, Git-backed private workflow state, approved
-Markdown as the publication source, and an Astro static projection. Network providers
-sit behind narrow internal ports; the lifecycle rules remain inside one deep module.
+DeepGeno.watch separates a public, immutable-by-pin engine from private operational
+state. The TypeScript lifecycle remains one deep module behind source, model, state,
+and delivery ports; repository placement enforces which data may be public.
 
 ```text
-bioRxiv ─┐
-arXiv ───┼─ LiteratureSource adapters ─┐
-Crossref ┘                              │
-Europe PMC / OpenAlex enrichment ──────┼─ LiteratureLifecycle
-OpenAI / Anthropic / fake model ────────┤    ├─ private inbox projection
-Git files / temporary test store ───────┘    └─ approved public projection
-                                                    │
-                                                    └─ Astro → Workers Static Assets
+bioRxiv · arXiv · Crossref · Europe PMC · OpenAlex
+                         │
+                         ▼
+private Kuanhao-Chao/DeepGeno.watch-state
+  workflow wrappers ── engine.lock.json (literal public commit)
+        │                         │
+        │              detached public engine checkout
+        └────────────── project-root + explicit private state-root
+                         │
+            Candidate → Gate 1 → Evidence/Draft → Gate 2
+                         │
+                  sealed public bytes
+                  + delivery outbox
+                         │
+                         ▼
+one-file PR to public Kuanhao-Chao/DeepGeno.watch
+                         │
+                    human merge
+                         │
+                Astro → deepgeno-watch Worker
 ```
 
-The lifecycle interface is intentionally coarse. Callers may discover, apply a human
-decision batch, synthesize eligible papers, and project a view; they cannot call a
-ranker or publisher in a way that skips a gate. Normalization, deduplication, ranking,
-state transitions, evidence validation, retry safety, and publication invariants stay
-local to the module.
+Cloudflare reads only the public repository. The private companion is an operational
+control plane, not a deployment source and not a second copy of the application.
 
-## Invariants
+## Repository and root boundaries
 
-- A Candidate always has a complete, non-empty abstract and source provenance.
-- A Candidate must match both a configured domain topic and an explicit computational
-  or modeling signal; descriptive wet-lab keyword overlap alone is insufficient.
-- Canonical identity prefers normalized DOI, then source accession, then a stable
-  content fingerprint. Multiple source records merge into one Paper, and identical
-  source accessions appear only once in its provenance.
-- No synthesis model runs before an explicit candidate `summarize` decision.
-- No summary is public before an explicit draft approval represented by a merged PR.
-- Every quantitative claim names at least one evidence ID.
-- Missing details remain missing; model output cannot turn inference into reported fact.
-- Decisions and external work are idempotent, revision-aware, and replayable.
-- A deferred Candidate resurfaces after its timer even when an upstream source does
-  not repeat the old record.
-- A revision request must carry curator feedback and produces a new immutable Draft
-  Summary that identifies the draft it supersedes.
-- Public projection cannot read `data/private`.
-- Provider, model, prompt, schema, evidence scope, input digest, generation time, and
-  review time remain attached to every publication.
+The public project root owns:
 
-## Storage
+- lifecycle/source/model code, contracts, prompts, and policy configuration;
+- the companion renderer and allowlisted workflow templates;
+- approved `content/public/papers/*.md` projections;
+- public `CI / verify`, Astro, and `wrangler.jsonc`.
 
-V1 deliberately uses reviewable Git files rather than an operational database:
+The private state root owns:
 
-- `data/private/papers`: normalized source records, candidates, evidence, drafts
-- `data/private/batches`: stable daily review snapshots
-- `data/private/decisions`: append-only human choices
-- `data/private/checkpoints`: source cursors and overlap boundaries
-- `content/public/papers`: validated, approved publication documents
+- normalized papers, candidate batches, decisions, evidence, drafts, and checkpoints;
+- immutable publications, sealed releases, delivery outbox states, and receipts;
+- Gate 1/Gate 2 pull requests and trusted workflow wrappers;
+- the curator App identity/key and protected model/source credentials.
 
-The domain contracts contain no filesystem or Node-specific values. A future D1-backed
-review desk can implement the internal state port without changing the public catalog
-or provider adapters.
+In GitHub Actions, private-state commands require both an explicit pinned project root
+and an explicit private state root. The roots must be distinct, and the state store is
+private-bound: it cannot write public content. `engine.lock.json` contains exactly the
+fixed public repository and a literal lowercase 40-hex commit. Bootstrap verifies that
+commit is on public `main`, checks it out detached outside private state, and runs only
+that pinned code.
 
-## Source strategy
+## Lifecycle and publication invariants
 
-Discovery uses official or community-supported metadata interfaces only:
+- A Candidate has a complete non-empty abstract and source provenance, plus both a
+  configured topic match and an explicit computational/modeling signal.
+- Canonical identity prefers normalized DOI, then accession, then a stable content
+  fingerprint; repeated source records upsert rather than duplicate.
+- No model runs before a Gate 1 `summarize` decision.
+- Every quantitative summary claim cites validated evidence; unavailable details stay
+  unavailable and inference is never promoted to a reported fact.
+- Drafts, evidence packets, decisions, publications, releases, and delivery records are
+  immutable or concurrency-safe, revision-aware, and replayable.
+- Gate 2 approval declassifies through a positive allowlist, remaps public evidence IDs,
+  and seals exact Markdown bytes plus a SHA-256 digest before delivery.
+- Public output excludes private IDs, raw abstracts/evidence, evidence hashes, prompts,
+  raw model output, reviewer identity, private Git metadata, provider request IDs, and
+  token usage.
+- Delivery persists `pending` before network work and reconciles `pr-open`, `merged`, or
+  `failed` outcomes. Matching digests reuse remote state; differing bytes conflict.
+- A public delivery branch and PR may change exactly one regular
+  `content/public/papers/<slug>.md` file. Automation never pushes public `main`.
 
-- bioRxiv date-window API, with three-day overlap and upsert
-- arXiv OAI-PMH through its canonical `oaipmh.arxiv.org` endpoint, using the `q-bio`,
-  `cs:cs:LG`, and `stat:stat:ML` server-side sets and retaining a category-boundary
-  check for `q-bio.*`, `cs.LG`, and `stat.ML`
-- Crossref journal/ISSN polling using stable created-date windows and cursor pagination
-- Europe PMC core journal search to recover complete abstracts that Crossref omits
-- Europe PMC DOI/PMID enrichment and open-access JATS when available
-- OpenAlex singleton DOI enrichment, not bulk discovery
+## Authentication and deployment
 
-The system does not scrape publisher pages, mirror copyrighted PDFs, or republish
-figures. Full text is fetched only when legally exposed by the source and retained as
-private evidence; otherwise synthesis is explicitly marked abstract-only.
+One curator GitHub App is installed on exactly `DeepGeno.watch-state` and
+`DeepGeno.watch`. Its durable client ID and private key exist only in the private
+companion. Each job requests a short-lived token for one repository: private state
+mutation receives only its private permissions; public delivery receives only Contents
+and Pull requests write. Runtime `GH_TOKEN` and `DEEPGENO_PUBLIC_GITHUB_TOKEN` values
+are never persisted.
+
+Provider credentials remain environment-scoped in the private companion, which
+requires an eligible paid GitHub plan for private-repository environment secrets and
+variables. There is no repository-level or public-secret fallback. `synthesis` accepts
+only `main`; required-reviewer protection is used when the plan supports it, while
+Prevent self-review stays disabled so the single curator retains a viable approval
+path.
+
+Public `main` requires a pull request and `CI / verify`, without an App bypass. The
+existing `deepgeno-watch` Worker watches only the public repository and deploys human-
+merged public content. Preview Access and deployment acceptance remain Cloudflare
+controls, but the conditional Cloudflare check is not a universal branch-rule context.
+
+## Source and evidence strategy
+
+Discovery uses metadata interfaces rather than publisher scraping:
+
+- bioRxiv date windows with overlap and upsert;
+- arXiv OAI-PMH category sets for `q-bio.*`, `cs.LG`, and `stat.ML`;
+- Crossref journal/ISSN cursor polling through created-date windows;
+- Europe PMC journal discovery, DOI/PMID enrichment, and open-access JATS;
+- OpenAlex singleton DOI enrichment, not bulk discovery.
+
+Copyrighted PDFs and figures are not mirrored or republished. Full text is retained
+privately only when a source exposes it legally; otherwise synthesis is marked
+abstract-only.
 
 ## Failure model
 
-One malformed source record or unavailable enrichment endpoint is quarantined and
-reported without erasing successful records. The shared outbound client paces each
-configured host and retries bounded transient/429 responses; Crossref uses the polite
-pool and stays below its list-request budget. Provider errors never trigger a hidden
-failover. Schema-invalid synthesis remains private and retryable. Storage corruption or
-an inability to commit state is fatal because partial gate transitions are unsafe.
+A malformed record or unavailable enrichment endpoint is quarantined and reported
+without erasing successful records. Non-shadow discovery with any source issue stops
+before state mutation or Gate 1; shadow runs may report partial coverage without
+mutation. Outbound clients pace hosts and bound transient/429 retries. Provider errors
+never trigger hidden failover. Invalid synthesis stays private and retryable. Storage
+corruption, root ambiguity, divergent sealed bytes, and delivery scope conflicts fail
+closed because partial gate transitions are unsafe.
 
-Every source applies its configured overlap before fetching. Cursor checkpoints retain
-the exact effective source window, so an interrupted page sequence is completed before
-the next window begins. Gate 1 fan-out is rejected before model jobs when it exceeds
-the configured per-run ceiling.
+The companion renderer itself assumes a standard clone on one filesystem and one
+trusted operator. It rejects linked-worktree `.git` files and symlinks; cross-filesystem
+atomic moves, hardlinks, and hostile concurrent local path swapping are outside its
+supported setup boundary.

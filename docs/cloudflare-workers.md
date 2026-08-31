@@ -1,56 +1,74 @@
 # Cloudflare Workers deployment
 
-The Astro application is fully static. It deploys through the existing
-`deepgeno-watch` Worker as Workers Static Assets and does not need a Worker entrypoint,
-assets binding, D1, KV, or runtime secrets.
+The Astro application is fully static and deploys through the existing public
+`deepgeno-watch` Worker as Workers Static Assets. It has no Worker entrypoint, runtime
+secret, database, or private-state binding.
 
-## Confirmed failure and recovery
+## Fixed repository boundary
 
-Cloudflare's first **Connect to Git** attempt created a Worker while the repository
-still declared the Pages-only `pages_build_output_dir` setting. Workers Builds then ran
-`npx wrangler deploy` at the npm workspace root and Wrangler stopped during application
-detection. The Astro build itself remained green.
+Cloudflare Connect to Git must remain connected only to the public
+`Kuanhao-Chao/DeepGeno.watch` repository. Never connect the private
+`Kuanhao-Chao/DeepGeno.watch-state` companion, add its deploy key, mirror its branches,
+or copy `data/private/**` into a build context. Literature operations publish through a
+one-file public pull request; only a human-merged public `main` commit reaches
+Cloudflare.
 
-The checked-in `wrangler.jsonc` fixes that product mismatch by declaring
-`assets.directory`, SSG-compatible HTML handling, the generated `404.html`, production
-`workers.dev`, and version preview URLs. Do not recreate this as a Pages project and do
-not add a Worker `main` entrypoint.
+Preserve the existing Worker name, production URL
+`https://deepgeno-watch.khchao.workers.dev`, Git connection, build history, and
+configuration. The private-topology change does not require a new Worker or Pages
+project.
 
-## Configure Workers Builds
+## Existing deployment contract
 
-1. In **Workers & Pages**, select the existing `deepgeno-watch` Worker.
-2. Open **Settings → Build** and connect the private GitHub repository
-   `Kuanhao-Chao/DeepGeno.watch` if it is not already selected.
-3. Set the production branch to `main` and leave the root directory at the repository
-   root. Do not use `apps/web` as the root.
-4. Set the build command to `npm run build`.
-5. Set the production deploy command to `npx wrangler deploy`.
-6. Set the preview deploy command to `npx wrangler versions upload` and enable builds
-   for non-production branches.
-7. Add build variables `NODE_VERSION=22.18.0` and
-   `PUBLIC_SITE_URL=https://deepgeno-watch.khchao.workers.dev` for production and
-   preview builds. Neither value is a secret.
-8. Set build watch includes to `apps/web/*`, `content/public/*`,
-   `packages/contracts/*`, `scripts/reset-web-content-cache.mjs`,
-   `scripts/static-artifact-check.mjs`, `package.json`, `package-lock.json`, `.nvmrc`,
-   `tsconfig.base.json`, and `wrangler.jsonc`. Exclude `data/private/*`.
-9. Open the Worker **Access** tab, select **Protect this Worker behind Access**, choose
-   **Previews only**, select or create the intended reviewer authentication policy, and
-   select **Apply Access**. This keeps the production `workers.dev` route public.
-10. Save the settings before retrying a build; retries use the settings that are active
-    at retry time.
+The first Connect to Git attempt failed because the repository still declared the
+Pages-only `pages_build_output_dir` field while Workers Builds invoked
+`npx wrangler deploy`. The checked-in `wrangler.jsonc` now declares the existing
+`deepgeno-watch` Worker, current compatibility date, `workers_dev`, preview URLs, and
+the Astro `apps/web/dist` static-assets directory with HTML and custom-404 handling.
+Do not restore the Pages field or add a `main` entrypoint.
 
-Run `./scripts/activate-production.sh` for a resumable browser-guided walkthrough of
-the remaining build-watch and preview-Access steps. The wizard also continues into the
-separate provider-secret and controlled Gate 1 activation stages.
+The intended Workers Builds settings are:
 
-Private-only Gate 1 and Gate 2 review branches should be skipped by build watch paths.
-Changes to the web app, public projection, build scripts, dependencies, or deployment
-configuration should build and receive a GitHub check.
+- Repository: public `Kuanhao-Chao/DeepGeno.watch`
+- Production branch: `main`
+- Root directory: repository root, not `apps/web`
+- Build command: `npm run build`
+- Production deploy command: `npx wrangler deploy`
+- Preview deploy command: `npx wrangler versions upload`
+- Build variables: `NODE_VERSION=22.18.0` and
+  `PUBLIC_SITE_URL=https://deepgeno-watch.khchao.workers.dev`
+- Build-watch includes: `apps/web/*`, `content/public/*`, `packages/contracts/*`,
+  `scripts/reset-web-content-cache.mjs`, `scripts/static-artifact-check.mjs`,
+  `package.json`, `package-lock.json`, `.nvmrc`, `tsconfig.base.json`, and
+  `wrangler.jsonc`
 
-## Local and remote verification
+There is no private-path exclusion to maintain in the public checkout because private
+state and operational workflow wrappers live only in the companion. Documentation or
+engine-only changes may legitimately miss the build-watch include list.
 
-Before pushing, run:
+Keep non-production public branch previews enabled and protect Worker Preview URLs with
+Cloudflare Access for the intended reviewer policy. Production `workers.dev` remains
+public. `scripts/setup-private-ops.sh` does not alter Cloudflare; inspect dashboard
+settings separately and do not use the obsolete activation wizard.
+
+## Merge and deploy path
+
+1. Private Gate 2 approval seals exact public Markdown bytes and a digest.
+2. The private outbox opens or reconciles one public PR changing exactly one
+   `content/public/papers/<slug>.md` file.
+3. Public CI enforces that one-file boundary and runs the full `CI / verify` job.
+4. A human merges the PR to public `main`.
+5. Workers Builds checks out that public merge, builds Astro, and deploys the existing
+   Worker.
+
+The public branch ruleset requires `CI / verify`. Do not require the Cloudflare check
+as a universal merge context because build-watch paths may skip it for changes that do
+not affect the site. For every publication PR, treat a successful post-merge Worker
+deployment and production smoke test as an explicit acceptance gate.
+
+## Local verification
+
+Before a public merge, run:
 
 ```bash
 npm ci
@@ -59,34 +77,35 @@ git diff --check
 ```
 
 `npm run check` performs typechecking, tests, a fresh production build, static-artifact
-validation, privacy scanning, and `wrangler deploy --dry-run`. The dry run must enumerate
-the generated assets and exit without workspace-detection or Pages-project errors.
+validation, privacy scanning, and `wrangler deploy --dry-run`. The dry run must
+enumerate the generated assets and exit without performing a deployment.
 
-After the Git build succeeds:
+After a Git build succeeds:
 
-- Confirm the deployment source is Git rather than `dash_template`.
+- Confirm its repository is `Kuanhao-Chao/DeepGeno.watch` and source is the expected
+  public-main commit, never the companion.
 - Confirm `/`, `/papers/`, `/reading-list/`, `/methodology/`, `/feed.xml`,
   `/catalog.json`, `/robots.txt`, and `/sitemap-index.xml` return successfully.
 - Confirm an unknown path returns the generated custom page with HTTP 404.
-- Confirm canonical, RSS, sitemap, and robots URLs use
-  `https://deepgeno-watch.khchao.workers.dev`.
-- Confirm CSP, referrer, framing, MIME-sniffing, permissions, and immutable asset-cache
-  headers from `apps/web/public/_headers`.
-- Confirm a web/code branch receives an Access-protected preview and a private-only
-  literature review branch is skipped.
+- Confirm canonical, RSS, sitemap, and robots URLs use the production URL.
+- Confirm headers from `apps/web/public/_headers`, including immutable hashed-asset
+  caching.
+- Confirm a public code/content branch gets an Access-protected preview and a path-
+  excluded change may omit the conditional Cloudflare check without blocking CI.
 
-## Build failure guide
+## Failure guide
 
-| Symptom                                                   | Cause                                                        | Recovery                                                                                                 |
-| --------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| Application detection ran at the workspace root           | Old Pages config or incorrect root directory                 | Confirm the build commit has `assets.directory` and reset the root to the repository root                |
-| Workers command used in a Pages project                   | `pages_build_output_dir` is still present                    | Remove the field completely and rerun `npx wrangler deploy --dry-run`                                    |
-| Build succeeds but the production URL returns 1042 or 404 | No version was promoted or `workers.dev` is disabled         | Inspect the production deployment and enable the production `workers.dev` route                          |
-| No Cloudflare GitHub check appears                        | Git access, branch control, or watch paths skipped the build | Reauthorize the repository, confirm `main`, review watch paths, and retry                                |
-| Node, npm, or workspace packages are missing              | Wrong root or build image                                    | Use the repository root, set `NODE_VERSION=22.18.0`, save settings, then clear the build cache and retry |
-| Canonical URLs still use another hostname                 | Missing or stale build variable                              | Set `PUBLIC_SITE_URL`, clear the build cache, and rebuild                                                |
-| Builds API returns Cloudflare code 10000                  | API token lacks Workers Builds permissions                   | Use the dashboard or a user-scoped token with Workers Builds Read/Configuration permissions              |
+| Symptom                                          | Boundary or cause                                       | Recovery                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Application detection runs at the workspace root | Old Pages config or wrong root                          | Require `assets.directory` in the public commit and use the repository root                  |
+| Workers command is used in a Pages project       | `pages_build_output_dir` was restored                   | Remove the field and verify `npx wrangler deploy --dry-run`                                  |
+| Build succeeds but production returns 1042/404   | No version promoted or `workers.dev` disabled           | Inspect the existing Worker deployment and production route                                  |
+| No Cloudflare check appears                      | Build-watch path skipped or Git/branch access issue     | Decide whether the path should build; otherwise review the public Git connection and `main`  |
+| Build references `DeepGeno.watch-state`          | Repository boundary violation                           | Stop; disconnect the companion and restore the public-only Git connection                    |
+| Node/npm/workspaces are missing                  | Wrong root or build image                               | Use the public repository root and `NODE_VERSION=22.18.0`, then clear the build cache        |
+| Canonical URLs use another host                  | Missing/stale `PUBLIC_SITE_URL`                         | Restore the production build variable and rebuild                                            |
+| Builds API returns an authorization error        | API token lacks the relevant Workers Builds permissions | Use the dashboard or an appropriately scoped user token; never reuse a literature/App secret |
 
-For an unresolved failure, capture the build ID, checked-out commit SHA, failing command,
-and approximately 30 surrounding log lines from Build History. Redact tokens, API keys,
-authorization headers, private abstracts, and evidence text.
+For unresolved failures, capture the build ID, public commit SHA, failing command, and
+roughly 30 surrounding log lines. Redact authorization headers, keys, private paper
+text, evidence, and model records.

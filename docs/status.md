@@ -1,104 +1,94 @@
 # Implementation status
 
-Last updated: 2026-08-28
+Last updated: 2026-08-31
 
-## Implemented
+Current remote state (2026-08-31): production is served from the public
+Kuanhao-Chao/DeepGeno.watch repository through existing deepgeno-watch Worker, catalog
+empty. Private companion, curator App, synthesis environment, private preflight, and
+public-main ruleset not yet provisioned. Branch work not remotely active until
+merged/validated.
 
-- TypeScript/npm monorepo with shared strict Zod contracts.
-- bioRxiv, arXiv OAI (`q-bio`, `cs.LG`, `stat.ML`), and Crossref journal discovery.
-- Europe PMC core journal discovery/open-access JATS and OpenAlex DOI enrichment.
-- Per-source cursor checkpoints, configured overlap, canonical DOI/title deduplication,
-  unique source provenance, complete-abstract gating, token-boundary lexical ranking,
-  an explicit computational-signal gate, and topic taxonomy.
-- Private Git-backed Candidate, decision, Draft Summary, evidence, checkpoint, and
-  publication state.
-- Gate 1 Candidate PRs with exactly Summarize, Defer, or Dismiss; expired deferrals
-  resurface without relying on upstream repetition.
-- Strict structured-output OpenAI Responses and Anthropic Messages adapters with no
-  model tools, no silent failover, explicit model identity, token accounting, and
-  output-token limits.
-- Gate 2 approval, revision-with-feedback, and dismissal. Approval records Priority and
-  Progress; revision creates a new immutable evidence-linked draft.
-- Astro static catalog, reading-list view, deep technical pages, query-string search and
-  filtering, RSS, JSON catalog, responsive/dark styling, and security headers.
-- Serialized GitHub workflows for scheduled/manual discovery, review validation,
-  bounded synthesis, retry/revision, public projection, build, and privacy checks.
-- Automated contract, lifecycle, provider, source-adapter, HTTP-boundary, workflow, and
-  privacy tests.
+## Production baseline
 
-## Verified locally
+- Public repository `main` remains at production commit
+  `96655fe7077d0e76064e4d2d4b412d8aaacdadc3` while this work is isolated on
+  `codex/safe-production-activation`.
+- `https://deepgeno-watch.khchao.workers.dev` serves the static site and a valid empty
+  `/catalog.json` (`schemaVersion: 1.0`, zero papers).
+- The existing `deepgeno-watch` Worker, URL, asset-only `wrangler.jsonc`, build commands,
+  build variables, preview configuration, and Git connection remain intact.
+- The remote `Kuanhao-Chao/DeepGeno.watch-state` repository does not yet exist. No App,
+  secret, environment, ruleset, live operation, or production data was created from
+  this implementation branch.
+- Public scheduled ingestion run `33325412494` (created 2026-08-30) failed safely at
+  **Confirm private repository boundary** and skipped discovery, demonstrating that no
+  private state was written publicly.
 
-- All workspace TypeScript/Astro checks pass with zero diagnostics.
-- All automated tests pass.
-- Workflow and Dependabot files parse as valid YAML.
-- Both the zero-publication site and a temporary fully populated approved-paper fixture
-  build successfully; deep detail, JSON, and RSS outputs were exercised. The fixture
-  was removed, and the privacy scanner inspects the generated artifact.
-- A live isolated 2026-08-27 discovery run completed in roughly 90 seconds with 14
-  Candidates and zero source issues after narrowing arXiv to its category-level OAI
-  sets. The audited batch had no incomplete abstracts or repeated source-record keys;
-  known descriptive wet-lab false positives were excluded while key DNA, RNA, protein,
-  single-cell, variant-effect, and sequence-to-function papers remained.
+## Implemented on this branch
 
-## Activated
+- Strict public schema v2 and deterministic declassification into one validated
+  Markdown projection with anonymous review time and remapped public evidence IDs.
+- Positive exclusion of private identifiers, raw evidence/abstracts, reviewer identity,
+  prompts/model output, provider request IDs, token use, and private Git provenance.
+- Explicit public project and private state roots, with GitHub Actions requiring the
+  `--state-root` CLI flag and private-bound state writers.
+- Immutable private publication records, sealed exact public bytes/digests, and a
+  concurrency-safe delivery outbox with `pending`, `pr-open`, `merged`, and `failed`
+  states.
+- Idempotent one-file public pull-request delivery with exact-head GraphQL CAS,
+  reconciliation after ambiguous failures, remote identity/mode validation, direct-main
+  refusal, and trusted public CI scope enforcement.
+- An allowlisted private companion template with four workflow/action wrappers. Each
+  operation checks out trusted private `main`, bootstraps a literal public engine pin,
+  uses explicit roots, and mints one-repository GitHub App tokens.
+- A fail-closed companion renderer that preserves private runtime state, detects static
+  and lock drift, supports confirmed lock-only repins, and rejects symlink/special-path
+  ambiguity.
+- An eight-stage `scripts/setup-private-ops.sh` with a canonical wizard library,
+  pre-mutation `gh` capability checks, exact repository validation, confirmed seed and
+  App boundaries, browser-only provider keys, PEM stdin streaming, and a scoped
+  preflight run. It is statically tested and is not run automatically.
+- Updated architecture, operations, security, Cloudflare, and companion documentation,
+  plus ADR 0003 for the two-repository topology.
 
-- Private GitHub repository `Kuanhao-Chao/DeepGeno.watch` is connected and the verified
-  baseline is on `main`.
-- Actions has repository write/PR permission. The `synthesis` environment,
-  `openai`/`gpt-5.6-terra` model target, 5,000-token ceiling, temporary one-summary
-  activation ceiling, and Crossref polite-pool contact are configured. No provider
-  secret has been added yet, so no paid synthesis can run.
-- GitHub CI passed on the baseline. Three dated remote shadow windows (2026-08-26
-  through 2026-08-28) completed with 8 Candidates each, zero source warnings, no
-  repository mutation, and no LLM call. Those runs exposed the upstream compatibility
-  and latency improvements now covered by regression tests.
-- The tuned commit `67a4b32` passed remote CI and repeated the 2026-08-27 shadow window
-  in 1 minute 33 seconds with 14 Candidates, zero source warnings, no mutation, and no
-  model call.
-- Wrangler 4 is pinned locally and Cloudflare OAuth is valid. Cloudflare uses the
-  existing `deepgeno-watch` Worker rather than a Pages project; its two original
-  dashboard-template placeholder versions have been superseded by the Git-built Astro
-  deployment below.
-- The repository deployment contract has been migrated from the incompatible
-  Pages-only `pages_build_output_dir` field to an asset-only Worker with explicit
-  static directory, HTML routing, custom 404, `workers.dev`, and preview URLs. The
-  unified local/CI check now includes a static-artifact verification and Wrangler dry
-  run.
-- Commit `f1a63f8` passed both `CI / verify` and `Workers Builds: deepgeno-watch`.
-  Cloudflare build `01252de0-d44b-4e26-9cd5-59c87ce9078f` deployed Worker version
-  `45a442fc-89eb-4e50-b7ba-b446f32d87e8` to
-  `https://deepgeno-watch.khchao.workers.dev`. All catalog/feed routes return 200, the
-  generated unknown-route page returns 404, canonical URLs are consistent, security
-  headers are active, and hashed Astro assets receive the immutable cache policy.
-- The follow-up docs-only commit `ab0c5e9` also passed both checks, including Cloudflare
-  build `79dafcbd-6369-4765-bacc-14384c444e92`. Because documentation does not affect
-  the static artifact, that deploy confirms the build watch paths are not yet saved.
-- Preview URLs are enabled and automatically emit `X-Robots-Tag: noindex`. Preview
-  Access protection still needs to be enabled in the Cloudflare dashboard. The initial
-  synthesis ceiling is now 1; scheduled live ingestion remains disabled.
+## Verified during branch development
+
+- Focused contract, lifecycle, publication, delivery, workflow, renderer, and wizard
+  tests pass after test-first failure demonstrations.
+- The full TypeScript/Vitest suite, Astro/type checks, production build, static artifact
+  validation, privacy scan, YAML and embedded-shell parsing, Wrangler dry run, format,
+  and diff hygiene are rerun at each completed phase.
+- Independent scoped review found and closed workflow trust, immutable replay, receipt
+  binding, Git endpoint, exact-CAS, renderer drift, setup-node, and token-permission
+  defects before this status was recorded.
 
 ## Activation remaining
 
-These still require an external account choice or a deliberately later rollout gate:
+1. Complete the whole-branch verification and independent review, then merge through a
+   normal public pull request with `CI / verify` green.
+2. Upgrade the local GitHub CLI from 0.11.0 and run
+   `./scripts/setup-private-ops.sh` from a clean public-main standard clone. The wizard
+   provisions only after explicit confirmations.
+3. Confirm the private companion, eligible private-environment secret/variable support,
+   `main`-restricted synthesis environment, exact two-repository App installation, and
+   private preflight. Keep
+   `DEEPGENO_LIVE_INGESTION_ENABLED=false`.
+4. Add the public pull-request-only ruleset requiring `CI / verify`, with no App bypass.
+   Do not require the conditional Cloudflare check universally.
+5. Probe the selected model without summary generation, run the approved fixed-date
+   discovery, and require zero source issues. If the selected paper is absent, stop.
+6. Carry only the approved paper through private Gate 1 and Gate 2, create the one-file
+   public PR, and wait for human merge.
+7. Verify production catalog growth from zero to one and Access-protected previews.
+   Enable scheduled private ingestion only after that publication succeeds.
 
-1. Run `./scripts/activate-production.sh` to configure the documented build watch paths,
-   enable Cloudflare Access for Worker Preview URLs, add `OPENAI_API_KEY` directly to
-   the GitHub `synthesis` environment, and open the first controlled manual Gate 1 run.
-2. Carry at most one paper through Gate 1 and Gate 2 with `gpt-5.6-terra`; compare a
-   later, comparable paper with `claude-sonnet-5`, then retain the selected
-   provider/model variables and exactly one provider API key.
-3. Only after one approved Gate 2 draft reaches the public Worker with green privacy
-   and deployment checks, set `DEEPGENO_LIVE_INGESTION_ENABLED=true`.
-4. Run the bounded 90-day backfill after daily review volume is acceptable.
+## Known provisioning limits
 
-GitHub Free does not provide branch protection for a private repository. Required-check
-branch rules therefore remain unavailable unless the account upgrades; making the
-repository public is not an acceptable workaround. The lifecycle still revalidates
-every Gate 1 and Gate 2 decision before any synthesis or publication side effect.
+The renderer supports a standard clone on one filesystem and a single trusted local
+operator. Linked-worktree `.git` files are rejected. Cross-filesystem atomic moves,
+hardlinks, and hostile concurrent path replacement are not supported. These limits do
+not weaken the repository/runtime boundary, but operators must use the documented
+canonical sibling clone rather than a shared or adversarial filesystem.
 
-## Next extensions after activation
-
-Weekly email digests, author/repository tracking, semantic/vector retrieval across the
-approved catalog, citation/version alerts, and curator analytics are deliberately kept
-outside the first production slice until the daily two-gate loop has real operating
-data.
+Weekly email digests, author/repository tracking, semantic search, citation/version
+alerts, and curator analytics remain post-activation extensions.

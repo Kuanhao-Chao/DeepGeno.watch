@@ -1,97 +1,145 @@
 # Operations runbook
 
-## Repository activation
+## Safety boundary
 
-1. Create a **private** GitHub repository with `main` as the default branch and push
-   this workspace. The automation refuses to run when the event payload says the
-   repository is public.
-2. In **Settings → Actions → General**, allow Actions to read/write repository contents
-   and create pull requests. If a ruleset protects `main`, give the trusted literature
-   automation a narrowly scoped bypass; the state machine commits private checkpoints
-   and decisions directly to `main` before opening review-only branches.
-3. Create a GitHub environment named `synthesis`. Add environment variables
-   `DEEPGENO_MODEL_PROVIDER`, `DEEPGENO_MODEL_NAME`, and optionally
-   `DEEPGENO_MODEL_MAX_OUTPUT_TOKENS` (default `5000`). Add only the corresponding
-   `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` environment secret.
-4. Add repository variables `DEEPGENO_MAX_SUMMARIES_PER_RUN` (default `20`),
-   `DEEPGENO_LIVE_INGESTION_ENABLED` (start with `false`), and optional
-   `CROSSREF_MAILTO`. Add optional repository secret `OPENALEX_API_KEY`.
-5. Optional: add a fine-grained repository secret named `DEEPGENO_GITHUB_TOKEN` with
-   contents, issues, and pull-request write access. Without it, PRs created by the
-   built-in token produce approval-required workflow runs; a maintainer must select
-   **Approve workflows to run** on the first review run.
-6. Require the `CI / verify` and
-   `Literature review validation / Validate review choices` checks before merging
-   review PRs. Closing a PR without merge remains the simplest way to abandon it
-   without recording a new state transition.
+All literature operations run from private `Kuanhao-Chao/DeepGeno.watch-state` using
+the exact public engine commit recorded in its root `engine.lock.json`. The public
+`Kuanhao-Chao/DeepGeno.watch` repository contains code and approved output only; its
+only GitHub Actions workflow is CI. Cloudflare remains connected only to the public
+repository.
 
-For the remaining Cloudflare dashboard settings, provider secret, and first controlled
-live dispatch, run `./scripts/activate-production.sh`. It opens the relevant account
-pages and pauses after each human-only step; it does not collect credentials or click
-the final workflow action.
+Do not provision from an implementation branch. First merge the reviewed public
+implementation, require a green `CI / verify`, and use a clean standard clone whose
+HEAD equals public `main`.
 
-## Workflow map
+## Provision the private companion
 
-- `Literature ingestion` runs at 06:17 in `America/Los_Angeles` and supports manual,
-  replay, explicit date-window, bounded 90-day backfill, and shadow inputs. Scheduled
-  and manual runs default to shadow; scheduled mutation is possible only when the
-  repository variable `DEEPGENO_LIVE_INGESTION_ENABLED` is exactly `true`.
-- `Literature review validation` reads the PR body from the event but checks out and
-  executes only `main`. It validates immutable markers, exactly one action per item,
-  approval status choices, revision feedback, and synthesis fan-out.
-- `Literature synthesis and publication` records merged decisions, serializes all
-  private-state pushes, runs selected LLM calls one at a time, opens one Gate 2 PR per
-  draft, creates requested revisions, and publishes only approved drafts.
+The repeatable setup path is:
 
-## Initial rollout
+```bash
+./scripts/setup-private-ops.sh
+```
 
-1. Run discovery in shadow mode for three days. Inspect coverage, duplicates, complete
-   abstracts, ranking reasons, and source latency without opening PRs. Dispatch each
-   dated shadow window only after the previous run completes: GitHub keeps at most one
-   running and one pending run for this concurrency group, so a newly queued run can
-   replace an older pending run.
-2. Deploy the static Astro site through the Git-connected `deepgeno-watch` Worker using
-   the settings in `docs/cloudflare-workers.md`; protect preview URLs with Access.
-3. Temporarily set `DEEPGENO_MAX_SUMMARIES_PER_RUN=1`. Keep scheduled live ingestion
-   disabled and run one explicit non-shadow manual discovery. Select one paper at Gate
-   1 and carry it through Gate 2 with `gpt-5.6-terra`. Then use a comparable paper with
-   `claude-sonnet-5`, exposing only the active provider key. Do not use silent failover;
-   compare evidence fidelity, completeness, clarity, latency, and token usage, then
-   record the chosen provider and remove the unused key.
-4. Keep `DEEPGENO_LIVE_INGESTION_ENABLED=false` until one approved Gate 2 draft reaches
-   the public Worker with a green privacy check. Then enable it, raise the summary cap
-   to 5, and observe three daily cycles before restoring the ceiling of 20.
-5. Backfill the previous 90 days in no more than 30-day batches. Merge or close each
-   candidate PR before proceeding when review load becomes uncomfortable.
+Do not execute it from automation. It deliberately opens browser pages and waits at
+human confirmation gates. The current local GitHub CLI 0.11.0 is unsupported; install a
+current `gh`, restart the shell (`hash -r`), authenticate it manually as
+`Kuanhao-Chao`, and rerun the wizard. The wizard itself never changes GitHub CLI or Git
+configuration.
 
-## Daily checks
+The eight stages are:
 
-- Compare candidate count with the rolling baseline (the first tuned one-day window
-  produced 14); zero or a greater-than-twofold discontinuity deserves inspection.
-- Every candidate has its full abstract and a visible relevance explanation.
-- No paper receives multiple canonical IDs for the same normalized DOI.
-- Source checkpoints advance, with configured overlap retained.
-- Model call count equals newly selected papers plus explicit revisions.
-- Every summary PR reports evidence scope and passes schema/privacy/build checks.
+1. Verify Git, Node.js 22+, authenticated account identity, and the actual `gh secret`,
+   `variable`, `workflow`, and `run` subcommands before any mutation.
+2. Create an empty private `Kuanhao-Chao/DeepGeno.watch-state`, or validate that an
+   existing repository has the exact owner/name, remains private, is neither forked nor
+   archived, and uses `main` once seeded.
+3. Resolve public `main` to a literal 40-hex commit, require a clean matching public
+   checkout, clone the companion as the canonical sibling, render eight allowlisted
+   files plus `engine.lock.json`, and non-force push only the confirmed exact paths.
+   Repinning is separately confirmed and may change only the lock.
+4. Configure private repository variables and the protected `synthesis` environment.
+5. Create one curator GitHub App with webhook disabled; Metadata read and Contents,
+   Pull requests, and Issues read/write; no other access; owner `Kuanhao-Chao`; and an
+   installation selecting exactly the private and public repositories.
+6. Store the App Client ID as a private-repository variable and stream its downloaded
+   PEM by stdin into the private-repository secret. Remove the local PEM manually after
+   GitHub confirms it; the wizard never copies, prints, or deletes the key.
+7. Dispatch and watch one new private preflight run at current private `main`; it must
+   prove the App can mint separate one-repository tokens with the production permission
+   unions.
+8. Review a non-mutating cutover checklist. Model probing, live discovery, human gate
+   merges, public branch rules, and daily enablement remain Task 5 actions.
 
-## Recovery
+The renderer targets a standard clone on one filesystem under one trusted operator.
+Linked-worktree `.git` files, cross-filesystem atomic moves, hardlinks, and hostile
+concurrent local path swaps are unsupported and fail closed where detectable.
 
-Discovery and synthesis commands are idempotent and accept explicit windows or paper
-IDs. Re-run a missed date window with `workflow_dispatch`; overlap and upsert prevent
-duplicate candidates. A failed synthesis can be retried for its paper ID. For a failed
-requested revision, also pass the prior draft ID as `revision_of`; the same evidence
-digest and revision feedback are reused. Never hand-edit checkpoints merely to hide a
-stale-source alert.
+## Required private configuration
 
-A candidate review PR closed without merge is reopened on the next identical discovery
-run. A model draft committed before PR creation is reused without another model call.
-All literature-state workflow runs share one non-canceling concurrency group.
-This serializes state mutation, but it is not a durable multi-run queue: dispatch
-manual replay and backfill batches sequentially and wait for each conclusion before
-submitting the next batch.
+Repository variables on `DeepGeno.watch-state`:
 
-## Alerts
+- `DEEPGENO_PUBLIC_APP_CLIENT_ID`
+- `DEEPGENO_PUBLIC_REPOSITORY=Kuanhao-Chao/DeepGeno.watch`
+- `DEEPGENO_CURATOR_GITHUB_LOGIN=Kuanhao-Chao`
+- `DEEPGENO_MAX_SUMMARIES_PER_RUN=1` during activation (`20` normal ceiling)
+- `DEEPGENO_LIVE_INGESTION_ENABLED=false` until first publication succeeds
+- optional `CROSSREF_MAILTO`
 
-Treat a source as stale when its checkpoint has not advanced across three scheduled
-runs. File a GitHub issue with the source, last successful instant, HTTP status category,
-and retry count; do not include raw abstracts or credentials.
+Repository secrets:
+
+- `DEEPGENO_PUBLIC_APP_PRIVATE_KEY`
+- optional browser-entered `OPENALEX_API_KEY`
+
+Protected `synthesis` environment variables:
+
+- `DEEPGENO_MODEL_PROVIDER=openai`
+- `DEEPGENO_MODEL_NAME=gpt-5.6-terra`
+- `DEEPGENO_MODEL_MAX_OUTPUT_TOKENS=5000`
+
+The initial protected environment contains exactly the browser-entered
+`OPENAI_API_KEY`; `ANTHROPIC_API_KEY` is the mutually exclusive alternative for an
+explicit future provider switch. Private-repository environment secrets and variables
+require an eligible paid GitHub plan. If those controls are unavailable, stop and
+upgrade; never fall back to repository-level or public provider secrets. Restrict the
+environment to `main`. Required reviewers are conditional on private-repository plan
+support; add the curator when available. Leave **Prevent self-review** disabled in this
+single-curator topology so the curator who initiated a run can approve it instead of
+deadlocking the only approval path.
+
+`GH_TOKEN` and `DEEPGENO_PUBLIC_GITHUB_TOKEN` are short-lived workflow values, not
+stored secrets. After validated cutover, remove any legacy public
+`DEEPGENO_GITHUB_TOKEN` manually in the public repository’s Settings UI.
+
+## Private workflow map
+
+- **Literature ingestion** runs at 06:17 `America/Los_Angeles` and supports manual,
+  replay, explicit windows, bounded backfill, and shadow inputs. Scheduled mutation is
+  possible only when `DEEPGENO_LIVE_INGESTION_ENABLED` is exactly `true`.
+- **Literature review validation** uses `pull_request_target`, reads event data, and
+  checks out only literal private `main` without App or provider secrets. It validates
+  immutable markers and exactly one decision per item.
+- **Literature synthesis and publication** records trusted merged reviews, serializes
+  private state, performs selected model calls in the protected environment, opens
+  private Gate 2 PRs, seals approved output, and uses a separate public-only token to
+  open or reconcile one-file public PRs.
+- **Private operations preflight** fetches the literal engine pin and proves that the
+  private and public App tokens each enumerate exactly one expected repository with the
+  same permission unions used by production jobs.
+
+## Controlled first publication
+
+Keep live scheduling disabled. After the companion and App preflight are green:
+
+1. Probe the configured OpenAI model without generating a summary.
+2. Run non-shadow discovery with `from=2026-08-28`, `through=2026-08-28`,
+   `batch_days=1`, `backfill_days=0`, and `mode=manual`. Require zero source issues.
+3. Summarize only `paper-1aeb281eb0343b8b`. If it is absent, stop before synthesis.
+   Apply the approved seven-day deferrals and dismissals from the activation plan;
+   defer any unknown new candidate for seven days.
+4. Merge Gate 1 and Gate 2 only after their validations pass. Confirm approval creates
+   a sealed release and a public PR changing exactly one paper Markdown file.
+5. A human merges the public PR. Require `CI / verify`, a successful Cloudflare
+   deployment, and production catalog growth from zero to one.
+6. Only then set `DEEPGENO_LIVE_INGESTION_ENABLED=true`. Observe three daily cycles
+   before increasing the summary ceiling; backfill in sequential bounded batches.
+
+Public `main` must be pull-request-only with required `CI / verify` and no curator-App
+bypass. Do not require the conditional Cloudflare check as a universal context; verify
+it explicitly on publication merges.
+
+## Daily checks and recovery
+
+- Compare candidate volume with the rolling baseline and inspect discontinuities.
+- Require complete abstracts, relevance reasons, unique canonical IDs, and advancing
+  overlap-aware source checkpoints.
+- Model calls must equal newly selected papers plus explicit revisions.
+- Every private summary PR must show its evidence scope; every public delivery must be
+  one regular Markdown file with a matching sealed digest.
+- Re-run missed windows explicitly and sequentially. Discovery, synthesis, publication,
+  and delivery reconciliation are idempotent; never edit checkpoints, releases, or
+  receipts by hand to hide a failure.
+- A closed unmerged Gate PR records no transition. An existing draft or sealed release
+  is reused on retry. Ambiguous remote delivery is reconciled before another write.
+
+For source incidents, record the source, last success, HTTP status category, and retry
+count without including raw abstracts, evidence, tokens, or credentials.
