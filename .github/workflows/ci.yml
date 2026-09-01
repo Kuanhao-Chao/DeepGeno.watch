@@ -38,7 +38,7 @@ jobs:
           DEEPGENO_GUARD_REPOSITORY: ${{ github.repository }}
         run: node scripts/github/verify-public-delivery.mjs --base "$DEEPGENO_GUARD_BASE_SHA" --head "$DEEPGENO_GUARD_HEAD_SHA" --branch "$DEEPGENO_GUARD_BRANCH" --base-ref "$DEEPGENO_GUARD_BASE_REF" --base-repository "$DEEPGENO_GUARD_BASE_REPOSITORY" --head-repository "$DEEPGENO_GUARD_HEAD_REPOSITORY" --repository "$DEEPGENO_GUARD_REPOSITORY"
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
