@@ -46,8 +46,25 @@ afterEach(async () => {
 
 describe("GitHub literature workflow boundaries", () => {
   it("imports automation without running a command and exposes its entrypoint for testing", async () => {
-    const automation = await import("./automation.mjs");
-    expect(typeof automation.main).toBe("function");
+    const environment = {
+      GITHUB_ACTIONS: "true",
+      DEEPGENO_PROJECT_ROOT: path.resolve("."),
+      DEEPGENO_STATE_ROOT: path.resolve("../private-state-import-fixture"),
+    };
+    const priorEnvironment = Object.fromEntries(
+      Object.keys(environment).map((name) => [name, process.env[name]]),
+    );
+
+    try {
+      Object.assign(process.env, environment);
+      const automation = await import("./automation.mjs?entrypoint-test");
+      expect(typeof automation.main).toBe("function");
+    } finally {
+      for (const [name, value] of Object.entries(priorEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it("rejects review automation in a public repository", () => {
