@@ -6,10 +6,18 @@ on:
     types: [closed]
   workflow_dispatch:
     inputs:
+      operation:
+        description: Operation to run
+        type: choice
+        options:
+          - probe-model
+          - synthesize
+        default: probe-model
+        required: true
       paper_id:
         description: Selected canonical paper ID to synthesize or retry
         type: string
-        required: true
+        required: false
       revision_of:
         description: Optional prior draft ID with a recorded revision request
         type: string
@@ -23,6 +31,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  probe-model:
+    name: Probe configured model access
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'probe-model'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: synthesis
+    steps:
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Probe configured model access without generation
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" probe-model
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+
   record-triage:
     name: Record merged Gate 1
     if: >-
@@ -138,7 +183,9 @@ jobs:
 
   synthesize-manual:
     name: Synthesize requested paper
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'synthesize'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: synthesis

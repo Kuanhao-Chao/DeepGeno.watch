@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PublishedPaper, TechnicalSummary } from "@deepgeno/contracts";
-import { createLiteratureLifecycle } from "./lifecycle.js";
+import {
+  createLiteratureLifecycle,
+  type LiteratureLifecycle,
+  type RunReport,
+} from "./lifecycle.js";
 import { FakeStructuredModel } from "./models/fake.js";
 import {
   projectionFromRelease,
@@ -14,6 +18,7 @@ import type {
   LiteratureSource,
   MetadataEnricher,
   SourceDocument,
+  StructuredModelRequest,
 } from "./ports.js";
 import { parseCandidateReview, parseDraftReview } from "./review.js";
 import { FixtureSource } from "./sources/fixture.js";
@@ -30,6 +35,271 @@ afterEach(async () => {
 });
 
 describe("LiteratureLifecycle", () => {
+  it("persists preparation and one-use arming before model dispatch", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }),
+    );
+
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    expect(prepared).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "prepared",
+    });
+    expect(modelCalls).toBe(0);
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+
+    const armed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    expect(armed).toMatchObject({
+      command: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (armed.command !== "arm-synthesis") throw new Error("Unexpected report");
+    expect(armed.executionToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(modelCalls).toBe(0);
+    const armedRecord = await readFile(
+      fixture.store.synthesisRequestPath(prepared.requestId),
+      "utf8",
+    );
+    expect(armedRecord).not.toContain(armed.executionToken);
+    expect(JSON.parse(armedRecord)).toMatchObject({
+      state: "armed",
+      executionTokenSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "synthesize",
+        requestId: prepared.requestId,
+        executionToken: "wrong-one-use-token",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_execution_token_invalid" });
+    expect(modelCalls).toBe(0);
+
+    const completed = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: armed.executionToken,
+    });
+    expect(completed).toMatchObject({
+      command: "synthesize",
+      requestId: prepared.requestId,
+      outcome: "completed",
+      paperId: fixture.paperId,
+    });
+    expect(modelCalls).toBe(1);
+  });
+
+  it("allows exactly one concurrent arming transition", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }),
+    );
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+
+    const attempts = await Promise.allSettled([
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+    ]);
+
+    expect(
+      attempts.filter((attempt) => attempt.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      attempts.filter((attempt) => attempt.status === "rejected"),
+    ).toHaveLength(1);
+    expect(
+      attempts.find((attempt) => attempt.status === "rejected"),
+    ).toMatchObject({
+      reason: { code: "synthesis_reconciliation_required" },
+    });
+    expect(modelCalls).toBe(0);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({ state: "armed" });
+  });
+
+  it("rejects model configuration drift before arming", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }, "prepared-model"),
+    );
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+    const driftedLifecycle = createLiteratureLifecycle({
+      store: fixture.store,
+      sources: [new FixtureSource([sourceRecord({})])],
+      model: new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }, "different-model"),
+      clock: () => new Date(now),
+      relevanceThreshold: 0.2,
+    });
+
+    await expect(
+      driftedLifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: fixture.paperId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_model_mismatch" });
+    expect(modelCalls).toBe(0);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({ state: "prepared", model: "prepared-model" });
+  });
+
+  it("fails closed after an ambiguous provider outcome until explicit CAS reconciliation", async () => {
+    let modelCalls = 0;
+    const idempotencyKeys: Array<string | undefined> = [];
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel((request: StructuredModelRequest) => {
+        modelCalls += 1;
+        idempotencyKeys.push(request.idempotencyKey);
+        if (modelCalls === 1)
+          throw new Error("timeout after the provider accepted the request");
+        return summaryFixture("abstract-only");
+      }),
+    );
+
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+    const armed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (armed.command !== "arm-synthesis") throw new Error("Unexpected report");
+
+    const ambiguous = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: armed.executionToken,
+    });
+    expect(ambiguous).toMatchObject({
+      command: "synthesize",
+      requestId: prepared.requestId,
+      outcome: "ambiguous",
+    });
+    expect(modelCalls).toBe(1);
+    const ambiguousRequest = await fixture.store.loadSynthesisRequest(
+      prepared.requestId,
+    );
+    expect(ambiguousRequest).toMatchObject({ state: "ambiguous" });
+    if (!ambiguousRequest) throw new Error("Expected an ambiguous request");
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: fixture.paperId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "synthesize",
+        requestId: prepared.requestId,
+        executionToken: armed.executionToken,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    expect(modelCalls).toBe(1);
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: prepared.requestId,
+        expectedUpdatedAt: "not-an-iso-timestamp",
+        note: "Provider records confirm no completed response.",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_timestamp_invalid" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: prepared.requestId,
+        expectedUpdatedAt: "2026-08-28T06:59:59.000Z",
+        note: "Provider records confirm no completed response.",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_stale" });
+
+    const reconciled = await fixture.lifecycle.run({
+      kind: "reconcile-synthesis",
+      requestId: prepared.requestId,
+      expectedUpdatedAt: ambiguousRequest.updatedAt,
+      note: "Provider records confirm no completed response.",
+    });
+    expect(reconciled).toMatchObject({
+      command: "reconcile-synthesis",
+      requestState: "prepared",
+    });
+    const rearmed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (rearmed.command !== "arm-synthesis")
+      throw new Error("Unexpected report");
+    const completed = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: rearmed.executionToken,
+    });
+    expect(completed).toMatchObject({
+      command: "synthesize",
+      outcome: "completed",
+    });
+    expect(modelCalls).toBe(2);
+    expect(idempotencyKeys).toEqual([prepared.requestId, prepared.requestId]);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({
+      state: "completed",
+      reconciliations: [
+        expect.objectContaining({
+          priorState: "ambiguous",
+          note: "Provider records confirm no completed response.",
+        }),
+      ],
+    });
+  });
+
   it("enforces both human gates and publishes one deduplicated evidence-backed paper", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-lifecycle-"));
     roots.push(root);
@@ -93,7 +363,7 @@ describe("LiteratureLifecycle", () => {
     const paperId = batch.candidates[0]!.paper.id;
 
     await expect(
-      lifecycle.run({ kind: "synthesize", paperId }),
+      lifecycle.run({ kind: "prepare-synthesis", paperId }),
     ).rejects.toMatchObject({
       code: "synthesis_not_selected",
     });
@@ -120,9 +390,7 @@ describe("LiteratureLifecycle", () => {
       selectedPaperIds: [paperId],
     });
 
-    const synthesis = await lifecycle.run({ kind: "synthesize", paperId });
-    if (synthesis.command !== "synthesize")
-      throw new Error("Unexpected report");
+    const synthesis = await synthesizeSelected(lifecycle, paperId);
     expect(modelCalls).toBe(1);
     expect(
       synthesis.changedPaths.every((entry) =>
@@ -180,12 +448,7 @@ describe("LiteratureLifecycle", () => {
     });
     await lifecycle.applyDecisions(revisionRequest);
 
-    const revision = await lifecycle.run({
-      kind: "synthesize",
-      paperId,
-      revisionOfDraftId: draft.id,
-    });
-    if (revision.command !== "synthesize") throw new Error("Unexpected report");
+    const revision = await synthesizeSelected(lifecycle, paperId, draft.id);
     expect(modelCalls).toBe(2);
     const revisedDraft = await store.loadDraft(revision.draftId);
     expect(revisedDraft).toMatchObject({
@@ -403,8 +666,15 @@ describe("LiteratureLifecycle", () => {
     });
     expect(catalog.papers[0]).not.toHaveProperty("paperId");
 
-    const replay = await lifecycle.run({ kind: "synthesize", paperId });
-    expect(replay).toMatchObject({ command: "synthesize", changedPaths: [] });
+    const replay = await lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId,
+    });
+    expect(replay).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "completed",
+      changedPaths: [],
+    });
     expect(modelCalls).toBe(2);
   });
 
@@ -522,6 +792,77 @@ describe("LiteratureLifecycle", () => {
     });
   });
 });
+
+async function selectedLifecycle(model: FakeStructuredModel): Promise<{
+  lifecycle: LiteratureLifecycle;
+  store: GitFileStateStore;
+  paperId: string;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), "deepgeno-synthesis-"));
+  roots.push(root);
+  const store = new GitFileStateStore(root);
+  const lifecycle = createLiteratureLifecycle({
+    store,
+    sources: [new FixtureSource([sourceRecord({})])],
+    model,
+    clock: () => new Date(now),
+    relevanceThreshold: 0.2,
+  });
+  const discovery = await lifecycle.run({
+    kind: "discover",
+    from: "2026-08-28",
+    to: "2026-08-28",
+    trigger: "test",
+  });
+  if (discovery.command !== "discover") throw new Error("Unexpected report");
+  const batch = await store.loadCandidateBatch(discovery.batchId);
+  const projection = await lifecycle.project({
+    kind: "candidate-inbox",
+    batchId: batch.id,
+  });
+  if (projection.kind !== "candidate-inbox")
+    throw new Error("Unexpected projection");
+  const decision = parseCandidateReview(
+    projection.markdown.replace("- [ ] Summarize", "- [x] Summarize"),
+    batch,
+    { actor: { id: "curator", kind: "human" }, decidedAt: now },
+  );
+  await lifecycle.applyDecisions(decision);
+  return { lifecycle, store, paperId: batch.candidates[0]!.paper.id };
+}
+
+async function synthesizeSelected(
+  lifecycle: LiteratureLifecycle,
+  paperId: string,
+  revisionOfDraftId?: string,
+): Promise<
+  Extract<RunReport, { command: "synthesize"; outcome: "completed" }>
+> {
+  const prepared = await lifecycle.run({
+    kind: "prepare-synthesis",
+    paperId,
+    ...(revisionOfDraftId ? { revisionOfDraftId } : {}),
+  });
+  if (
+    prepared.command !== "prepare-synthesis" ||
+    prepared.requestState !== "prepared"
+  )
+    throw new Error("Expected a newly prepared synthesis request");
+  const armed = await lifecycle.run({
+    kind: "arm-synthesis",
+    requestId: prepared.requestId,
+  });
+  if (armed.command !== "arm-synthesis")
+    throw new Error("Expected an armed synthesis request");
+  const completed = await lifecycle.run({
+    kind: "synthesize",
+    requestId: prepared.requestId,
+    executionToken: armed.executionToken,
+  });
+  if (completed.command !== "synthesize" || completed.outcome !== "completed")
+    throw new Error("Expected a completed synthesis request");
+  return completed;
+}
 
 function sourceRecord(overrides: Partial<SourceDocument>): SourceDocument {
   return {

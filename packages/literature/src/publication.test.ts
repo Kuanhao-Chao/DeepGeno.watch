@@ -38,7 +38,7 @@ describe("PublicDeclassifier", () => {
       coreProblem: { evidenceIds: ["e1"] },
       novelty: [{ evidenceIds: ["e2"] }],
       evidence: {
-        sources: [
+        references: [
           { id: "e1", sourceUrl: "https://example.org/paper" },
           { id: "e2", sourceUrl: "https://example.org/supplement" },
         ],
@@ -122,7 +122,7 @@ function publishedPaper(): PublishedPaper {
     },
     evidence: {
       scope: "abstract-only",
-      citations: [
+      references: [
         {
           id: "private-evidence-a",
           documentKind: "abstract",

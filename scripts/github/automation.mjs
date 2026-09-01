@@ -18,10 +18,13 @@ import {
   branchToken,
   buildLiteratureInvocation,
   executeApprovedPublication,
+  executeDurableSynthesis,
   executeStagedDiscovery,
   extractReviewId,
+  formatCommandFailure,
   parseJsonLine,
   privateGhArguments,
+  probeModelAccess,
   pullRequestMetadata,
   readEvent,
   relevantPullRequestKind,
@@ -49,10 +52,11 @@ export async function main() {
   if (command === "record-summary") return recordSummary();
   if (command === "validate-model")
     return validateModelEnvironment(process.env);
+  if (command === "probe-model") return probeModel();
   if (command === "synthesize") return synthesize();
   if (command === "publish-approved") return publishApproved();
   throw new Error(
-    "Usage: automation.mjs <assert-private|triage-check|ingest|record-triage|record-summary|validate-model|synthesize|publish-approved>",
+    "Usage: automation.mjs <assert-private|triage-check|ingest|record-triage|record-summary|validate-model|probe-model|synthesize|publish-approved>",
   );
 }
 
@@ -60,6 +64,15 @@ async function assertPrivate() {
   const event = await githubEvent();
   await assertBoundPrivateState(event);
   console.log("Private repository boundary confirmed.");
+}
+
+async function probeModel() {
+  const event = await githubEvent();
+  await assertBoundPrivateState(event);
+  const result = await probeModelAccess(process.env);
+  console.log(
+    `Configured ${result.provider} model access confirmed: ${result.model}.`,
+  );
 }
 
 async function triageCheck() {
@@ -262,28 +275,91 @@ async function synthesize() {
   if (revisionOf) requireSafeValue(revisionOf, "INPUT_REVISION_OF");
   configureGit();
   switchToMain();
-  const result = literature("synthesize", [
-    "--paper",
-    paperId,
-    ...(revisionOf ? ["--revision-of", revisionOf] : []),
-  ]);
+  const result = await executeDurableSynthesis({
+    prepare: async () =>
+      literature("prepare-synthesis", [
+        "--paper",
+        paperId,
+        ...(revisionOf ? ["--revision-of", revisionOf] : []),
+      ]),
+    commitPrepared: async (prepared) => {
+      const changedPaths = validateChangedPaths(prepared.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const reviewPath =
+        prepared.requestState === "completed"
+          ? validatePrivateReviewPath(prepared.reviewPath)
+          : undefined;
+      await commitAndPush(
+        changedPaths.filter((path) => path !== reviewPath),
+        prepared.requestState === "completed"
+          ? `chore(literature): materialize draft ${requireSafeValue(prepared.draftId, "draftId")}`
+          : `chore(literature): prepare synthesis ${requireSafeValue(prepared.requestId, "requestId")}`,
+      );
+    },
+    arm: async (requestId) =>
+      literature("arm-synthesis", [
+        "--request",
+        requireSafeValue(requestId, "requestId"),
+      ]),
+    commitArmed: async (armed) => {
+      const changedPaths = validateChangedPaths(armed.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const pushed = await commitAndPush(
+        changedPaths,
+        `chore(literature): arm synthesis ${requireSafeValue(armed.requestId, "requestId")}`,
+      );
+      if (!pushed) {
+        throw new Error(
+          "Refusing model dispatch because armed synthesis state was not durably pushed",
+        );
+      }
+    },
+    dispatch: async ({ requestId, executionToken }) =>
+      literature("synthesize", [
+        "--request",
+        requireSafeValue(requestId, "requestId"),
+        "--execution-token",
+        requireSafeValue(executionToken, "executionToken"),
+      ]),
+    commitOutcome: async (outcome) => {
+      const changedPaths = validateChangedPaths(outcome.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const reviewPath =
+        outcome.outcome === "completed"
+          ? validatePrivateReviewPath(outcome.reviewPath)
+          : undefined;
+      const pushed = await commitAndPush(
+        changedPaths.filter((path) => path !== reviewPath),
+        outcome.outcome === "completed"
+          ? `chore(literature): record draft ${requireSafeValue(outcome.draftId, "draftId")}`
+          : `chore(literature): record ambiguous synthesis ${requireSafeValue(outcome.requestId, "requestId")}`,
+      );
+      if (!pushed) {
+        throw new Error(
+          "Refusing to advance because the synthesis outcome was not durably pushed",
+        );
+      }
+    },
+  });
+  if (result.command === "synthesize" && result.outcome === "ambiguous") {
+    throw new Error(
+      `Synthesis ${requireSafeValue(result.requestId, "requestId")} has an ambiguous provider outcome; inspect provider records and explicitly reconcile before retrying`,
+    );
+  }
   const reviewPath = validatePrivateReviewPath(result.reviewPath);
-  const changedPaths = validateChangedPaths(result.changedPaths, [
-    PRIVATE_PREFIX,
-  ]);
-  const statePaths = changedPaths.filter((path) => path !== reviewPath);
-  await commitAndPush(
-    statePaths,
-    `chore(literature): record draft ${result.draftId}`,
-  );
+  const draftId = requireSafeValue(result.draftId, "draftId");
+  const slug = requireSafeValue(result.slug, "slug");
   await openReviewPullRequest({
-    branch: `literature/summaries/${branchToken(result.draftId)}`,
+    branch: `literature/summaries/${branchToken(draftId)}`,
     label: SUMMARY_LABEL,
     labelDescription: "Private LLM summary awaiting human approval",
     labelColor: "795da3",
-    title: `Summary review · ${result.slug}`,
+    title: `Summary review · ${slug}`,
     reviewPath,
-    commitMessage: `review: inspect summary draft ${result.draftId}`,
+    commitMessage: `review: inspect summary draft ${draftId}`,
   });
 }
 
@@ -583,7 +659,7 @@ function run(command, args, { cwd, capture = false }) {
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   if (result.status !== 0)
-    throw commandError(`${command} ${args.join(" ")}`, result);
+    throw new Error(formatCommandFailure(command, args, result));
   if (capture && result.stderr) process.stderr.write(result.stderr);
   return capture ? result.stdout : "";
 }

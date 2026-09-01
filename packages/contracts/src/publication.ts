@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { PublicEvidenceCitationSchema as PrivateEvidenceCitationSchema } from "./evidence.js";
+import { PublishedEvidenceReferenceSchema } from "./evidence.js";
 import { PaperSchema } from "./paper.js";
 import {
   ActorSchema,
@@ -52,7 +52,7 @@ export const PublishedPaperSchema = z
     evidence: z
       .object({
         scope: EvidenceScopeSchema,
-        citations: z.array(PrivateEvidenceCitationSchema).min(1),
+        references: z.array(PublishedEvidenceReferenceSchema).min(1),
       })
       .strict(),
   })
@@ -62,7 +62,7 @@ export type PublishedPaper = z.infer<typeof PublishedPaperSchema>;
 export const PublicEvidenceIdSchema = z.string().regex(/^e[1-9][0-9]*$/);
 const PublicEvidenceIdsSchema = z.array(PublicEvidenceIdSchema).min(1);
 
-const PublicEvidenceCitationSchema = z
+const PublicEvidenceReferenceSchema = z
   .object({
     id: PublicEvidenceIdSchema,
     documentKind: z.enum(["abstract", "jats", "html", "pdf", "supplement"]),
@@ -145,7 +145,7 @@ export const PublicPaperSchema = z
       .object({
         scope: EvidenceScopeSchema,
         fullTextAvailable: z.boolean(),
-        sources: z.array(PublicEvidenceCitationSchema).min(1),
+        references: z.array(PublicEvidenceReferenceSchema).min(1),
       })
       .strict(),
     coreProblem: PublicEvidenceBackedStatementSchema,
@@ -165,16 +165,16 @@ export const PublicPaperSchema = z
   })
   .strict()
   .superRefine((paper, context) => {
-    const sourceIds = new Set<string>();
-    paper.evidence.sources.forEach((source, index) => {
-      if (sourceIds.has(source.id)) {
+    const referenceIds = new Set<string>();
+    paper.evidence.references.forEach((reference, index) => {
+      if (referenceIds.has(reference.id)) {
         context.addIssue({
           code: "custom",
-          message: `Duplicate public evidence source: ${source.id}`,
-          path: ["evidence", "sources", index, "id"],
+          message: `Duplicate public evidence reference: ${reference.id}`,
+          path: ["evidence", "references", index, "id"],
         });
       }
-      sourceIds.add(source.id);
+      referenceIds.add(reference.id);
     });
 
     const references: Array<{ ids: string[]; path: (string | number)[] }> = [
@@ -213,10 +213,10 @@ export const PublicPaperSchema = z
     ];
     references.forEach(({ ids, path }) => {
       ids.forEach((id, index) => {
-        if (!sourceIds.has(id)) {
+        if (!referenceIds.has(id)) {
           context.addIssue({
             code: "custom",
-            message: `Public summary cites unknown evidence: ${id}`,
+            message: `Public summary names an unknown Evidence Reference: ${id}`,
             path: [...path, index],
           });
         }

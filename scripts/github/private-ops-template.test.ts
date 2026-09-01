@@ -1,6 +1,7 @@
 import { access, lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const templateRoot = path.resolve("templates/private-ops");
 
@@ -136,7 +137,7 @@ describe("private operations companion template", () => {
         step.includes("automation.mjs"),
       ),
     );
-    expect(automationSteps).toHaveLength(12);
+    expect(automationSteps).toHaveLength(13);
     for (const step of automationSteps) {
       expect(step).toContain(
         "DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}",
@@ -151,6 +152,7 @@ describe("private operations companion template", () => {
       "record-triage",
       "record-summary",
       "validate-model",
+      "probe-model",
       "synthesize",
       "publish-approved",
     ]) {
@@ -291,7 +293,7 @@ describe("private operations companion template", () => {
         block.includes("OPENAI_API_KEY") || block.includes("ANTHROPIC_API_KEY"),
     );
 
-    expect(providerBlocks).toHaveLength(3);
+    expect(providerBlocks).toHaveLength(4);
     for (const block of providerBlocks) {
       expect(block).toContain("environment: synthesis");
       expect(block).toContain(
@@ -310,6 +312,46 @@ describe("private operations companion template", () => {
     expect(occurrences(summarize, "DEEPGENO_CURATOR_GITHUB_LOGIN:")).toBe(2);
     expect(occurrences(summarize, "DEEPGENO_PUBLIC_GITHUB_TOKEN:")).toBe(1);
     expect(occurrences(summarize, "GH_TOKEN:")).toBe(3);
+  });
+
+  it("dispatches a protected read-only model probe separately from synthesis", async () => {
+    const summarize = await template(".github/workflows/summarize.yml");
+    const workflow = parseYaml(summarize);
+    const dispatch = workflow.on.workflow_dispatch;
+
+    expect(dispatch.inputs.operation).toEqual({
+      description: "Operation to run",
+      type: "choice",
+      options: ["probe-model", "synthesize"],
+      default: "probe-model",
+      required: true,
+    });
+    expect(dispatch.inputs.paper_id.required).toBe(false);
+
+    const job = workflow.jobs["probe-model"];
+    expect(job.environment).toBe("synthesis");
+    expect(job.if).toContain("inputs.operation == 'probe-model'");
+    expect(job.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "Check out trusted private main",
+          uses: "actions/checkout@v6",
+          with: expect.objectContaining({
+            repository: "Kuanhao-Chao/DeepGeno.watch-state",
+            ref: "main",
+            "persist-credentials": false,
+          }),
+        }),
+        expect.objectContaining({
+          name: "Probe configured model access without generation",
+          run: 'node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" probe-model',
+        }),
+      ]),
+    );
+    expect(JSON.stringify(job)).not.toContain("create-github-app-token");
+    expect(JSON.stringify(job)).not.toContain("GH_TOKEN");
+    expect(JSON.stringify(job)).not.toContain("INPUT_PAPER_ID");
+    expect(JSON.stringify(job)).not.toContain(" synthesize");
   });
 
   it("documents exactly the variables and secrets consumed by the wrappers", async () => {

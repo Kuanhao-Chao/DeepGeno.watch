@@ -165,6 +165,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       report = await lifecycle.applyDecisions(decisions);
       break;
     }
+    case "prepare-synthesis": {
+      const lifecycle = createLiteratureLifecycle({
+        ...baseOptions,
+        model: configuredModel(),
+      });
+      report = await lifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: requiredFlag(parsed, "paper"),
+        ...(parsed.flags["revision-of"]
+          ? { revisionOfDraftId: parsed.flags["revision-of"] }
+          : {}),
+      });
+      break;
+    }
+    case "arm-synthesis": {
+      const lifecycle = createLiteratureLifecycle(baseOptions);
+      report = await lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: requiredFlag(parsed, "request"),
+      });
+      break;
+    }
     case "synthesize": {
       const lifecycle = createLiteratureLifecycle({
         ...baseOptions,
@@ -172,10 +194,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       });
       report = await lifecycle.run({
         kind: "synthesize",
-        paperId: requiredFlag(parsed, "paper"),
-        ...(parsed.flags["revision-of"]
-          ? { revisionOfDraftId: parsed.flags["revision-of"] }
-          : {}),
+        requestId: requiredFlag(parsed, "request"),
+        executionToken: requiredFlag(parsed, "execution-token"),
+      });
+      break;
+    }
+    case "reconcile-synthesis": {
+      const lifecycle = createLiteratureLifecycle(baseOptions);
+      report = await lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: requiredFlag(parsed, "request"),
+        expectedUpdatedAt: requiredFlag(parsed, "expected-updated-at"),
+        note: requiredFlag(parsed, "note"),
       });
       break;
     }
@@ -236,7 +266,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     default:
       throw new LiteratureError(
         "unknown_command",
-        "Expected discover, apply-triage, synthesize, apply-draft, publish, deliver, or project",
+        "Expected discover, apply-triage, prepare-synthesis, arm-synthesis, synthesize, reconcile-synthesis, apply-draft, publish, deliver, or project",
       );
   }
   process.stdout.write(
@@ -252,7 +282,10 @@ interface ParsedArguments {
 const PRIVATE_STATE_COMMANDS = new Set([
   "discover",
   "apply-triage",
+  "prepare-synthesis",
+  "arm-synthesis",
   "synthesize",
+  "reconcile-synthesis",
   "apply-draft",
   "publish",
   "deliver",

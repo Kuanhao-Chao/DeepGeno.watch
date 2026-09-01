@@ -38,7 +38,7 @@ const modelFacts = [
   ['Context length', data.architecture.contextLength],
 ].filter((fact): fact is [string, string] => Boolean(fact[1]));
 
-function formatLocator(locator: (typeof data.evidence.sources)[number]['locator']): string {
+function formatLocator(locator: (typeof data.evidence.references)[number]['locator']): string {
   return [
     locator.section,
     locator.paragraph ? `paragraph ${locator.paragraph}` : undefined,
@@ -218,16 +218,16 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
           <p class="section-index">05</p>
           <h2>Evidence & provenance</h2>
           <p class="provenance__intro">
-            Claims above point to these source locators. Evidence links open the original source;
+            Claims above point to these Evidence References. Each link opens the original paper;
             generated text is rendered as plain structured fields, never executable markup.
           </p>
           <ol class="evidence-list">
-            {data.evidence.sources.map((source) => (
-              <li id={`evidence-${source.id}`}>
-                <span class="evidence-list__id">{source.id}</span>
+            {data.evidence.references.map((reference) => (
+              <li id={`evidence-${reference.id}`}>
+                <span class="evidence-list__id">{reference.id}</span>
                 <div>
-                  <p><strong>{titleCase(source.documentKind)}</strong> · {formatLocator(source.locator)}</p>
-                  <a href={source.sourceUrl} rel="noreferrer">Open evidence source <span aria-hidden="true">↗</span></a>
+                  <p><strong>{titleCase(reference.documentKind)}</strong> · {formatLocator(reference.locator)}</p>
+                  <a href={reference.sourceUrl} rel="noreferrer">Open evidence reference <span aria-hidden="true">↗</span></a>
                 </div>
               </li>
             ))}

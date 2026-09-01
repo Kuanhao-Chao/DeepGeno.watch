@@ -75,3 +75,18 @@ After any initial setup or confirmed repin, manually run **Private operations
 preflight** on private `main`. It must fetch the literal engine pin and prove that both
 production-scope tokens enumerate exactly their one expected repository before any
 live ingestion is enabled.
+
+## Activation safety
+
+Keep live ingestion disabled and use the manual **Literature synthesis and
+publication** workflow's default `probe-model` operation before the controlled scan.
+The probe checks configured OpenAI model metadata without generation or state writes.
+The approved controlled-scan decision manifest remains private and is compiled against
+the generated Gate 1 body with the pinned engine; follow `docs/operations.md` in the
+public engine for the exact command and gate order.
+
+Paid synthesis pushes prepared and one-use armed request states before dispatch. Never
+edit those records or automatically retry an armed, dispatching, or ambiguous request.
+Inspect provider history and use only the documented timestamp-guarded reconciliation
+procedure. Enable and verify Cloudflare Preview URL Access before approving Gate 2 for
+the first public delivery.

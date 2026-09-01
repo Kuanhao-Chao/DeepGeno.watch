@@ -1,5 +1,6 @@
 export {
   createLiteratureLifecycle,
+  type ArmSynthesisCommand,
   type DecisionReport,
   type DiscoverCommand,
   type LiteratureCommand,
@@ -7,11 +8,20 @@ export {
   type LiteratureLifecycleOptions,
   type Projection,
   type ProjectionRequest,
+  type PrepareSynthesisCommand,
   type PublishCommand,
+  type ReconcileSynthesisCommand,
   type RunReport,
   type SynthesizeCommand,
 } from "./lifecycle.js";
-export { GitFileStateStore } from "./store.js";
+export {
+  GitFileStateStore,
+  synthesisRequestId,
+  type SynthesisReconciliation,
+  type SynthesisRequest,
+  type SynthesisRequestDescriptor,
+  type SynthesisResult,
+} from "./store.js";
 export {
   PublicDeclassifier,
   renderPublicMarkdown,
@@ -70,4 +80,6 @@ export type {
   SourceFetchRequest,
   SourceFetchResult,
   StructuredModel,
+  StructuredModelRequest,
+  StructuredModelResponse,
 } from "./ports.js";

@@ -304,6 +304,60 @@ export async function executeApprovedPublication({
   return { publication, delivery };
 }
 
+/**
+ * Persists every paid-call transition to the private remote before advancing.
+ * The raw execution token exists only between arming and dispatch; Git stores
+ * its digest, so a lost runner fails closed until an operator reconciles it.
+ */
+export async function executeDurableSynthesis({
+  prepare,
+  commitPrepared,
+  arm,
+  commitArmed,
+  dispatch,
+  commitOutcome,
+}) {
+  const prepared = requireSynthesisReport(await prepare(), "prepare-synthesis");
+  if (
+    prepared.requestState !== "prepared" &&
+    prepared.requestState !== "completed"
+  ) {
+    throw new Error("Preparation returned an invalid synthesis request state");
+  }
+  await commitPrepared(prepared);
+  if (prepared.requestState === "completed") return prepared;
+
+  const armed = requireSynthesisReport(
+    await arm(prepared.requestId),
+    "arm-synthesis",
+  );
+  if (
+    armed.requestId !== prepared.requestId ||
+    armed.requestState !== "armed" ||
+    typeof armed.executionToken !== "string" ||
+    armed.executionToken.length === 0
+  ) {
+    throw new Error("Arming returned an invalid synthesis request");
+  }
+  await commitArmed(armed);
+
+  const outcome = requireSynthesisReport(
+    await dispatch({
+      requestId: armed.requestId,
+      executionToken: armed.executionToken,
+    }),
+    "synthesize",
+  );
+  if (
+    outcome.requestId !== prepared.requestId ||
+    (outcome.outcome !== "completed" && outcome.outcome !== "ambiguous")
+  ) {
+    throw new Error("Dispatch returned an invalid synthesis outcome");
+  }
+  await commitOutcome(outcome);
+  return outcome;
+}
+
 export function relevantPullRequestKind(event) {
   const labels = new Set(
     (event?.pull_request?.labels ?? []).map((label) =>
@@ -320,6 +374,20 @@ export function relevantPullRequestKind(event) {
   if (candidate) return "candidate";
   if (summary) return "summary";
   return undefined;
+}
+
+function requireSynthesisReport(report, command) {
+  if (
+    !report ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    report.command !== command ||
+    typeof report.requestId !== "string" ||
+    report.requestId.length === 0
+  ) {
+    throw new Error(`Expected a valid ${command} report`);
+  }
+  return report;
 }
 
 export function pullRequestMetadata(event) {
@@ -376,6 +444,39 @@ export function parseJsonLine(output, expectedCommand) {
   return value;
 }
 
+export function formatCommandFailure(command, args, result) {
+  const sensitiveValues = [];
+  const safeArguments = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = String(args[index]);
+    if (argument === "--execution-token" && index + 1 < args.length) {
+      const value = String(args[index + 1]);
+      if (value) sensitiveValues.push(value);
+      safeArguments.push(argument, "[REDACTED]");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--execution-token=")) {
+      const value = argument.slice("--execution-token=".length);
+      if (value) sensitiveValues.push(value);
+      safeArguments.push("--execution-token=[REDACTED]");
+      continue;
+    }
+    safeArguments.push(argument);
+  }
+  const redact = (value) =>
+    sensitiveValues.reduce(
+      (redacted, secret) => redacted.split(secret).join("[REDACTED]"),
+      value,
+    );
+  const detail = [result.stderr, result.stdout]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join("\n")
+    .trim();
+  const display = [command, ...safeArguments].join(" ");
+  return `${display} failed with exit ${String(result.status)}${detail ? `\n${redact(detail)}` : ""}`;
+}
+
 export function validateChangedPaths(paths, allowedPrefixes) {
   if (!Array.isArray(paths)) throw new Error("changedPaths must be an array");
   return [...new Set(paths.map(validateRelativePath))].map((path) => {
@@ -424,6 +525,48 @@ export function validateModelEnvironment(environment) {
     20_000,
   );
   return { provider, model, selectedKey, maxOutputTokens };
+}
+
+export async function probeModelAccess(
+  environment,
+  { fetch: fetchImpl = globalThis.fetch } = {},
+) {
+  const configuration = validateModelEnvironment(environment);
+  if (configuration.provider !== "openai") {
+    throw new Error("Model access probing currently supports only openai");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Model access probing requires fetch");
+  }
+  const apiKey = environment[configuration.selectedKey].trim();
+  const response = await fetchImpl(
+    `https://api.openai.com/v1/models/${encodeURIComponent(configuration.model)}`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI model access probe failed with HTTP ${String(response.status)}`,
+    );
+  }
+  const model = await response.json();
+  if (
+    !model ||
+    Array.isArray(model) ||
+    typeof model !== "object" ||
+    model.object !== "model" ||
+    model.id !== configuration.model
+  ) {
+    throw new Error("OpenAI model access probe returned an unexpected model");
+  }
+  return { provider: configuration.provider, model: configuration.model };
 }
 
 export function validateSelectedPaperLimit(paperIds, configuredLimit = "20") {

@@ -10,7 +10,9 @@ import {
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { OpenAiStructuredModel } from "../../packages/literature/src/models/openai.js";
 
 import {
   assertPrivateRepository,
@@ -19,10 +21,13 @@ import {
   automationWorkingDirectory,
   buildLiteratureInvocation,
   executeApprovedPublication,
+  executeDurableSynthesis,
   executeStagedDiscovery,
   extractReviewId,
+  formatCommandFailure,
   parseJsonLine,
   privateGhArguments,
+  probeModelAccess,
   relevantPullRequestKind,
   resolveAutomationRoots,
   resolveDiscoveryWindows,
@@ -138,6 +143,177 @@ describe("GitHub literature workflow boundaries", () => {
     ).toThrow(/OPENAI_API_KEY/);
   });
 
+  it("probes OpenAI model access with one non-generative model retrieval", async () => {
+    let request:
+      { input: string | URL | Request; init?: RequestInit } | undefined;
+
+    const result = await probeModelAccess(
+      {
+        DEEPGENO_MODEL_PROVIDER: "openai",
+        DEEPGENO_MODEL_NAME: "gpt-5.6-terra",
+        OPENAI_API_KEY: "test-openai-key",
+      },
+      {
+        fetch: async (input, init) => {
+          request = { input, init };
+          return new Response(
+            JSON.stringify({
+              id: "gpt-5.6-terra",
+              object: "model",
+              created: 1_787_875_200,
+              owned_by: "openai",
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        },
+      },
+    );
+
+    expect(result).toEqual({ provider: "openai", model: "gpt-5.6-terra" });
+    expect(String(request?.input)).toBe(
+      "https://api.openai.com/v1/models/gpt-5.6-terra",
+    );
+    expect(request?.init).toMatchObject({
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: "Bearer test-openai-key",
+      },
+      redirect: "error",
+    });
+    expect(request?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(request?.init?.signal?.aborted).toBe(false);
+    expect(request?.init?.body).toBeUndefined();
+  });
+
+  it("fails a model probe without echoing provider response bodies", async () => {
+    const environment = {
+      DEEPGENO_MODEL_PROVIDER: "openai",
+      DEEPGENO_MODEL_NAME: "explicit-model",
+      OPENAI_API_KEY: "test-openai-key",
+    };
+    await expect(
+      probeModelAccess(environment, {
+        fetch: async () =>
+          new Response("private provider diagnostic", { status: 403 }),
+      }),
+    ).rejects.toThrow("OpenAI model access probe failed with HTTP 403");
+    await expect(
+      probeModelAccess(environment, {
+        fetch: async () =>
+          Response.json({ id: "different-model", object: "model" }),
+      }),
+    ).rejects.toThrow(/unexpected model/);
+    await expect(
+      probeModelAccess({
+        DEEPGENO_MODEL_PROVIDER: "anthropic",
+        DEEPGENO_MODEL_NAME: "explicit-model",
+        ANTHROPIC_API_KEY: "test-anthropic-key",
+      }),
+    ).rejects.toThrow(/supports only openai/);
+  });
+
+  it("runs the private probe command without model generation or state mutation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-probe-test-"));
+    roots.push(root);
+    const projectRoot = path.resolve(".");
+    const stateRoot = path.join(root, "state");
+    const runnerRoot = path.join(root, "runner");
+    const eventPath = path.join(root, "event.json");
+    const markerPath = path.join(stateRoot, "data/private/marker.txt");
+    await mkdir(path.dirname(markerPath), { recursive: true });
+    await mkdir(runnerRoot);
+    await writeFile(markerPath, "unchanged\n", "utf8");
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        repository: {
+          private: true,
+          full_name: "example/private-state",
+        },
+      }),
+      "utf8",
+    );
+    git(stateRoot, ["init"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    const statusBefore = gitOutput(stateRoot, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+    const priorArgv = [...process.argv];
+    const environment = {
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_PATH: eventPath,
+      RUNNER_TEMP: runnerRoot,
+      DEEPGENO_PROJECT_ROOT: projectRoot,
+      DEEPGENO_STATE_ROOT: stateRoot,
+      DEEPGENO_MODEL_PROVIDER: "openai",
+      DEEPGENO_MODEL_NAME: "gpt-5.6-terra",
+      OPENAI_API_KEY: "test-openai-key",
+    };
+    const priorEnvironment = Object.fromEntries(
+      Object.keys(environment).map((name) => [name, process.env[name]]),
+    );
+    const requests: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        requests.push({ input: String(input), init });
+        return new Response(
+          JSON.stringify({
+            id: "gpt-5.6-terra",
+            object: "model",
+            created: 1_787_875_200,
+            owned_by: "openai",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      });
+    const generateSpy = vi.spyOn(OpenAiStructuredModel.prototype, "generate");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      Object.assign(process.env, environment);
+      process.argv = [priorArgv[0]!, priorArgv[1]!, "probe-model"];
+      const automation = await import("./automation.mjs?probe-model-test");
+
+      await automation.main();
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({
+        input: "https://api.openai.com/v1/models/gpt-5.6-terra",
+        init: { method: "GET" },
+      });
+      expect(generateSpy).not.toHaveBeenCalled();
+      expect(await readFile(markerPath, "utf8")).toBe("unchanged\n");
+      expect(
+        gitOutput(stateRoot, [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+        ]),
+      ).toBe(statusBefore);
+    } finally {
+      process.argv = priorArgv;
+      for (const [name, value] of Object.entries(priorEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      fetchSpy.mockRestore();
+      generateSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("bounds summary fan-out before any model jobs start", () => {
     expect(validateSelectedPaperLimit(["paper-1", "paper-2"], "2")).toBe(2);
     expect(() =>
@@ -146,6 +322,155 @@ describe("GitHub literature workflow boundaries", () => {
     expect(() => validateSelectedPaperLimit(["paper-1"], "0")).toThrow(
       /integer from 1/,
     );
+  });
+
+  it("persists prepared and armed synthesis states before model dispatch", async () => {
+    const events: string[] = [];
+    let remoteState = "selected";
+    const result = await executeDurableSynthesis({
+      prepare: async () => {
+        events.push("prepare");
+        return {
+          command: "prepare-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "prepared",
+          changedPaths: ["data/private/synthesis-requests/request-1.json"],
+        };
+      },
+      commitPrepared: async () => {
+        remoteState = "prepared";
+        events.push("push-prepared");
+      },
+      arm: async (requestId: string) => {
+        expect(requestId).toBe("synthesis-request-1");
+        expect(remoteState).toBe("prepared");
+        events.push("arm");
+        return {
+          command: "arm-synthesis",
+          requestId,
+          requestState: "armed",
+          executionToken: "one-use-secret",
+          changedPaths: ["data/private/synthesis-requests/request-1.json"],
+        };
+      },
+      commitArmed: async () => {
+        remoteState = "armed";
+        events.push("push-armed");
+      },
+      dispatch: async ({ requestId, executionToken }) => {
+        expect(requestId).toBe("synthesis-request-1");
+        expect(executionToken).toBe("one-use-secret");
+        expect(remoteState).toBe("armed");
+        events.push("model-dispatch");
+        return {
+          command: "synthesize",
+          requestId,
+          outcome: "completed",
+          changedPaths: ["data/private/drafts/draft-1.json"],
+        };
+      },
+      commitOutcome: async () => {
+        remoteState = "completed";
+        events.push("push-completed");
+      },
+    });
+
+    expect(result).toMatchObject({ outcome: "completed" });
+    expect(events).toEqual([
+      "prepare",
+      "push-prepared",
+      "arm",
+      "push-armed",
+      "model-dispatch",
+      "push-completed",
+    ]);
+  });
+
+  it("does not dispatch a model call when durable arming cannot be pushed", async () => {
+    let modelCalls = 0;
+    await expect(
+      executeDurableSynthesis({
+        prepare: async () => ({
+          command: "prepare-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "prepared",
+        }),
+        commitPrepared: async () => {},
+        arm: async () => ({
+          command: "arm-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "armed",
+          executionToken: "one-use-secret",
+        }),
+        commitArmed: async () => {
+          throw new Error("push failed");
+        },
+        dispatch: async () => {
+          modelCalls += 1;
+          throw new Error("must not run");
+        },
+        commitOutcome: async () => {},
+      }),
+    ).rejects.toThrow(/push failed/);
+    expect(modelCalls).toBe(0);
+  });
+
+  it("redacts one-use synthesis tokens from subprocess failures", () => {
+    const executionToken = "raw-one-use-execution-token";
+    const message = formatCommandFailure(
+      "npm",
+      [
+        "run",
+        "literature",
+        "--",
+        "synthesize",
+        "--request",
+        "synthesis-request-1",
+        "--execution-token",
+        executionToken,
+      ],
+      {
+        status: 1,
+        stderr: `provider diagnostic accidentally repeated ${executionToken}`,
+        stdout: `partial output ${executionToken}`,
+      },
+    );
+
+    expect(message).not.toContain(executionToken);
+    expect(message).toContain("--execution-token [REDACTED]");
+    expect(message.match(/\[REDACTED\]/g)).toHaveLength(3);
+  });
+
+  it("materializes a completed synthesis without arming or dispatching again", async () => {
+    const events: string[] = [];
+    const result = await executeDurableSynthesis({
+      prepare: async () => ({
+        command: "prepare-synthesis",
+        requestId: "synthesis-request-1",
+        requestState: "completed",
+      }),
+      commitPrepared: async () => {
+        events.push("persist-materialized-draft");
+      },
+      arm: async () => {
+        events.push("unexpected-arm");
+      },
+      commitArmed: async () => {
+        events.push("unexpected-arm-push");
+      },
+      dispatch: async () => {
+        events.push("unexpected-model-dispatch");
+      },
+      commitOutcome: async () => {
+        events.push("unexpected-outcome-push");
+      },
+    });
+
+    expect(result).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "completed",
+    });
+    expect(events).toEqual(["persist-materialized-draft"]);
   });
 
   it("parses only the expected CLI result object", () => {
@@ -562,4 +887,14 @@ function git(cwd: string, args: string[]): void {
       `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
     );
   }
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
+  }
+  return result.stdout;
 }

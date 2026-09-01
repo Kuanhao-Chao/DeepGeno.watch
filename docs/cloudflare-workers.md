@@ -56,12 +56,14 @@ separately and do not use the obsolete activation wizard.
 
 ## Merge and deploy path
 
-1. Private Gate 2 approval seals exact public Markdown bytes and a digest.
-2. The private outbox opens or reconciles one public PR changing exactly one
+1. Before the first Gate 2 approval can produce a public preview, enable Preview URL
+   Access and verify authorized entry plus unauthenticated denial.
+2. Private Gate 2 approval seals exact public Markdown bytes and a digest.
+3. The private outbox opens or reconciles one public PR changing exactly one
    `content/public/papers/<slug>.md` file.
-3. Public CI enforces that one-file boundary and runs the full `CI / verify` job.
-4. A human merges the PR to public `main`.
-5. Workers Builds checks out that public merge, builds Astro, and deploys the existing
+4. Public CI enforces that one-file boundary and runs the full `CI / verify` job.
+5. A human merges the PR to public `main`.
+6. Workers Builds checks out that public merge, builds Astro, and deploys the existing
    Worker.
 
 The public branch ruleset requires `CI / verify`. Do not require the Cloudflare check

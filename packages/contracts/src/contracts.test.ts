@@ -307,7 +307,7 @@ describe("configuration and publication", () => {
       evidence: {
         scope: "abstract-only",
         fullTextAvailable: false,
-        sources: [
+        references: [
           {
             id: "e1",
             documentKind: "abstract",
@@ -367,7 +367,7 @@ describe("configuration and publication", () => {
       evidence: {
         scope: "abstract-only",
         fullTextAvailable: false,
-        sources: [
+        references: [
           {
             id: "e1",
             documentKind: "abstract",
@@ -452,8 +452,8 @@ describe("configuration and publication", () => {
         ...publicPaper,
         evidence: {
           ...publicPaper.evidence,
-          sources: [
-            { ...publicPaper.evidence.sources[0]!, id: privateEvidence },
+          references: [
+            { ...publicPaper.evidence.references[0]!, id: privateEvidence },
           ],
         },
       }).success,
@@ -463,9 +463,9 @@ describe("configuration and publication", () => {
         ...publicPaper,
         evidence: {
           ...publicPaper.evidence,
-          sources: [
-            ...publicPaper.evidence.sources,
-            publicPaper.evidence.sources[0]!,
+          references: [
+            ...publicPaper.evidence.references,
+            publicPaper.evidence.references[0]!,
           ],
         },
       }).success,

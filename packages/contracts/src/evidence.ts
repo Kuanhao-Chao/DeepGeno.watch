@@ -91,7 +91,7 @@ export const EvidencePacketSchema = z
   });
 export type EvidencePacket = z.infer<typeof EvidencePacketSchema>;
 
-export const PublicEvidenceCitationSchema = z
+export const PublishedEvidenceReferenceSchema = z
   .object({
     id: NonEmptyStringSchema,
     documentKind: EvidenceDocumentSchema.shape.kind,
@@ -100,6 +100,6 @@ export const PublicEvidenceCitationSchema = z
     contentSha256: Sha256Schema,
   })
   .strict();
-export type PublicEvidenceCitation = z.infer<
-  typeof PublicEvidenceCitationSchema
+export type PublishedEvidenceReference = z.infer<
+  typeof PublishedEvidenceReferenceSchema
 >;

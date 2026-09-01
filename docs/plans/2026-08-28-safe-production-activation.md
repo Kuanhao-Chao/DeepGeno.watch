@@ -19,7 +19,7 @@ The public site is healthy, but the GitHub repository is public while the litera
 
 ## Task 1: Public v2 declassification boundary
 
-Create a strict `PublicPaperSchema` v2 and a `PublicDeclassifier` that emits a deterministic `PublicProjection` containing one Markdown path, bytes, slug, and SHA-256 digest. Retain public bibliographic fields, reviewed summary fields, taxonomy, source links/locators, evidence scope, model/provider, generation time, prompt ID/version, output schema version, and anonymous approval time. Deterministically remap evidence references to `e1`, `e2`, and omit evidence content hashes.
+Create a strict `PublicPaperSchema` v2 and a `PublicDeclassifier` that emits a deterministic `PublicProjection` containing one Markdown path, bytes, slug, and SHA-256 digest. Retain public bibliographic fields, Published Summary fields, taxonomy, source links/locators, evidence scope, model/provider, generation time, prompt ID/version, output schema version, and anonymous approval time. Deterministically remap Evidence References to `e1`, `e2`, and omit evidence content hashes.
 
 Update Astro content validation, paper provenance rendering, catalog/RSS consumers, fixtures, and privacy checks. The rendered site must contain no private provenance fields. Add focused failing tests before production changes, then run contract, lifecycle/publication, web build, and privacy checks.
 
@@ -37,6 +37,8 @@ Refactor automation and workflows so operational triggers are inactive in the pu
 
 Require merged private review events to be attributed to `DEEPGENO_CURATOR_GITHUB_LOGIN`. A non-shadow discovery with source issues must stop before committing state or opening Gate 1; shadow discovery may report partial coverage without mutation.
 
+Split every paid synthesis into durable `prepared`, one-use `armed`, and post-dispatch `completed` or `ambiguous` states. Push the prepared and armed records before dispatch, use the stable request ID as the OpenAI idempotency key, and require explicit timestamp-guarded operator reconciliation before retrying any uncertain call.
+
 ## Task 4: Companion bootstrap and operating documentation
 
 Create a repeatable `scripts/setup-private-ops.sh` from the wizard template without modifying the template library section. Its stages must preflight `gh`, create or validate `Kuanhao-Chao/DeepGeno.watch-state` as private, seed its engine lock/workflow wrappers, configure repository variables and the `synthesis` environment, guide GitHub App creation and installation on exactly the private and public repositories, store the App client ID/private key in the private repository, validate repository-scoped tokens and permissions, and show safe cutover/removal steps for the old public secret.
@@ -49,6 +51,8 @@ Run the complete local verification suite, a populated public fixture build, wor
 
 After code is safely integrated and remote actions are authorized, provision the private companion, probe the configured OpenAI model without summary generation, and run discovery with `from=2026-08-28`, `through=2026-08-28`, `batch_days=1`, `backfill_days=0`, `mode=manual`, and `shadow=false`. Require zero source issues. Summarize only `paper-1aeb281eb0343b8b`; defer the nine approved candidates for seven days; dismiss the four approved off-focus candidates. Unknown new candidates defer seven days. If the selected paper is absent, stop before synthesis.
 
-Carry the selected paper through private Gate 1 and Gate 2, then create a one-file public PR. Human merges remain required. Explicitly enable Cloudflare Access for preview URLs, verify both authorized reviewer entry and unauthenticated denial, and verify the production catalog grows from zero to one. Enable daily private ingestion only after the first production publication succeeds.
+Keep the 1/9/4 decision manifest private. Compile it against the generated Gate 1 body with a generic public engine command that validates exact counts, defaults unknown candidates to seven-day deferral, and refuses to emit an output when the selected paper is missing.
+
+Carry the selected paper through private Gate 1. Before approving Gate 2 or allowing the first preview-producing public delivery, explicitly enable Cloudflare Access for preview URLs and verify both authorized reviewer entry and unauthenticated denial. Then approve Gate 2 and create the one-file public PR. Human merges remain required. Verify the production catalog grows from zero to one. Enable daily private ingestion only after the first production publication succeeds.
 
 Protect public `main` with pull-request-only updates and required `verify`; do not require the conditional Cloudflare check because build-watch paths may legitimately omit it.

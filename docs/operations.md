@@ -110,17 +110,69 @@ stored secrets. After validated cutover, remove any legacy public
 
 Keep live scheduling disabled. After the companion and App preflight are green:
 
-1. Probe the configured OpenAI model without generating a summary.
-2. Run non-shadow discovery with `from=2026-08-28`, `through=2026-08-28`,
-   `batch_days=1`, `backfill_days=0`, and `mode=manual`. Require zero source issues.
-3. Summarize only `paper-1aeb281eb0343b8b`. If it is absent, stop before synthesis.
-   Apply the approved seven-day deferrals and dismissals from the activation plan;
-   defer any unknown new candidate for seven days.
-4. Merge Gate 1 and Gate 2 only after their validations pass. Confirm approval creates
-   a sealed release and a public PR changing exactly one paper Markdown file.
-5. A human merges the public PR. Require `CI / verify`, a successful Cloudflare
+1. Dispatch the read-only model probe and watch that exact run to completion. It makes
+   one OpenAI model-metadata `GET`, no generation request, and no state commit:
+
+   ```bash
+   gh workflow run summarize.yml --repo Kuanhao-Chao/DeepGeno.watch-state --ref main -f operation=probe-model
+   gh run list --repo Kuanhao-Chao/DeepGeno.watch-state --workflow summarize.yml --event workflow_dispatch --limit 1
+   gh run watch RUN_ID --repo Kuanhao-Chao/DeepGeno.watch-state --exit-status
+   ```
+
+2. Before discovery, create
+   `data/private/activation/controlled-scan.json` on private `main` from the approved
+   private activation handoff and commit it only to `DeepGeno.watch-state`. The strict
+   shape is `schemaVersion`, `unknownCandidateAction: "defer"`, and a `decisions` array
+   of `{ "paperId": "paper-…", "action": "summarize|defer|dismiss" }`. It must contain
+   exactly 1 summarize, 9 defer, and 4 dismiss decisions. Never copy the private
+   decision list into the public repository.
+
+3. Dispatch the fixed, non-shadow discovery and watch its exact run. Require zero
+   source issues and one Gate 1 pull request:
+
+   ```bash
+   gh workflow run ingest.yml --repo Kuanhao-Chao/DeepGeno.watch-state --ref main -f mode=manual -f from=2026-08-28 -f through=2026-08-28 -F backfill_days=0 -F batch_days=1 -F shadow=false
+   gh run list --repo Kuanhao-Chao/DeepGeno.watch-state --workflow ingest.yml --event workflow_dispatch --limit 1
+   gh run watch RUN_ID --repo Kuanhao-Chao/DeepGeno.watch-state --exit-status
+   ```
+
+4. In a clean private clone, check out the new Gate 1 branch and compile its generated
+   review body with the pinned public engine. Substitute the literal absolute roots and
+   generated review path reported by discovery:
+
+   ```bash
+   gh pr checkout GATE_1_PR_NUMBER --repo Kuanhao-Chao/DeepGeno.watch-state
+   node /ABSOLUTE/PUBLIC/ROOT/scripts/github/prepare-controlled-scan.mjs \
+     --state-root /ABSOLUTE/PRIVATE/ROOT \
+     --manifest data/private/activation/controlled-scan.json \
+     --review data/private/reviews/GENERATED_GATE_1.md \
+     --output data/private/reviews/GENERATED_GATE_1-controlled.md \
+     --expect-summarize 1 \
+     --expect-defer 9 \
+     --expect-dismiss 4
+   gh pr edit GATE_1_PR_NUMBER --repo Kuanhao-Chao/DeepGeno.watch-state --body-file /ABSOLUTE/PRIVATE/ROOT/data/private/reviews/GENERATED_GATE_1-controlled.md
+   gh pr checks GATE_1_PR_NUMBER --repo Kuanhao-Chao/DeepGeno.watch-state --watch
+   ```
+
+   The compiler rejects wrong plan counts, malformed review controls, path/symlink
+   escapes, and a missing selected paper; it defers every unknown candidate for seven
+   days and reports known non-selected papers that were absent. Use the generated file
+   as the Gate 1 pull-request body, let review validation pass, inspect the diff, and
+   merge Gate 1 as the curator. Only `paper-1aeb281eb0343b8b` may be summarized; if it
+   is absent, stop before synthesis.
+
+5. Synthesis persists and pushes `prepared`, then a one-use `armed` state before the
+   paid call. A provider timeout becomes `ambiguous` and blocks automatic retry. Review
+   and approve the protected `synthesis` environment deployment, then inspect the
+   resulting private Gate 2 pull request.
+6. Before approving Gate 2, enable Cloudflare Access for Worker Preview URLs. Verify an
+   intended reviewer can enter and an unauthenticated preview request is denied.
+7. Merge Gate 2 only after its validation and the Preview Access check pass. Confirm
+   approval creates a sealed release and a public PR changing exactly one paper Markdown
+   file.
+8. A human merges the public PR. Require `CI / verify`, a successful Cloudflare
    deployment, and production catalog growth from zero to one.
-6. Only then set `DEEPGENO_LIVE_INGESTION_ENABLED=true`. Observe three daily cycles
+9. Only then set `DEEPGENO_LIVE_INGESTION_ENABLED=true`. Observe three daily cycles
    before increasing the summary ceiling; backfill in sequential bounded batches.
 
 Public `main` must be pull-request-only with required `CI / verify` and no curator-App
@@ -133,13 +185,41 @@ it explicitly on publication merges.
 - Require complete abstracts, relevance reasons, unique canonical IDs, and advancing
   overlap-aware source checkpoints.
 - Model calls must equal newly selected papers plus explicit revisions.
-- Every private summary PR must show its evidence scope; every public delivery must be
+- Every Draft Summary PR must show its evidence scope; every public delivery must be
   one regular Markdown file with a matching sealed digest.
 - Re-run missed windows explicitly and sequentially. Discovery, synthesis, publication,
   and delivery reconciliation are idempotent; never edit checkpoints, releases, or
   receipts by hand to hide a failure.
 - A closed unmerged Gate PR records no transition. An existing draft or sealed release
   is reused on retry. Ambiguous remote delivery is reconciled before another write.
+
+### Ambiguous synthesis recovery
+
+Do not rerun synthesis while its durable request is `armed`, `dispatching`, or
+`ambiguous`. Inspect the private request record and the provider request history first.
+If a completed provider response exists, stop and preserve the request; do not
+reconcile it into another paid call. If provider records confirm no usable
+completion—or the curator explicitly accepts the duplicate-charge risk—run a
+compare-and-swap reconciliation from the clean public root with its matching private
+clone:
+
+```bash
+npm run --silent literature -- reconcile-synthesis \
+  --project-root /ABSOLUTE/PUBLIC/ROOT \
+  --state-root /ABSOLUTE/PRIVATE/ROOT \
+  --request SYNTHESIS_REQUEST_ID \
+  --expected-updated-at EXACT_UPDATED_AT_FROM_PRIVATE_RECORD \
+  --note "Provider records checked; no usable completed response exists."
+```
+
+Commit and push only the reported private synthesis-request path. A stale timestamp or
+empty note fails closed. Then redispatch `summarize.yml` with `operation=synthesize`
+and the original `paper_id`; the stable request ID is also sent as the OpenAI
+idempotency key. The raw one-use execution token is never stored in Git.
+
+```bash
+gh workflow run summarize.yml --repo Kuanhao-Chao/DeepGeno.watch-state --ref main -f operation=synthesize -f paper_id=ORIGINAL_PAPER_ID
+```
 
 For source incidents, record the source, last success, HTTP status category, and retry
 count without including raw abstracts, evidence, tokens, or credentials.

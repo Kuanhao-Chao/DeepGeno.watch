@@ -16,7 +16,7 @@ private Kuanhao-Chao/DeepGeno.watch-state
         │              detached public engine checkout
         └────────────── project-root + explicit private state-root
                          │
-            Candidate → Gate 1 → Evidence/Draft → Gate 2
+            Candidate → Gate 1 → Evidence Packet/Draft Summary → Gate 2
                          │
                   sealed public bytes
                   + delivery outbox
@@ -43,7 +43,8 @@ The public project root owns:
 
 The private state root owns:
 
-- normalized papers, candidate batches, decisions, evidence, drafts, and checkpoints;
+- normalized Papers, Candidate Batches, decisions, Evidence Packets, Draft Summaries,
+  and checkpoints;
 - immutable publications, sealed releases, delivery outbox states, and receipts;
 - Gate 1/Gate 2 pull requests and trusted workflow wrappers;
 - the curator App identity/key and protected model/source credentials.
@@ -62,10 +63,17 @@ that pinned code.
 - Canonical identity prefers normalized DOI, then accession, then a stable content
   fingerprint; repeated source records upsert rather than duplicate.
 - No model runs before a Gate 1 `summarize` decision.
+- Each paid synthesis has one stable request ID derived from its immutable draft target.
+  Private Git persists `prepared`, then one-use `armed` state before dispatch. The raw
+  execution token is never persisted, while OpenAI receives the stable request ID as
+  its idempotency key.
+- A runner loss or provider uncertainty leaves the request `armed`, `dispatching`, or
+  `ambiguous`; all automatic retries fail closed until a curator records an explicit,
+  timestamp-guarded reconciliation after checking provider history.
 - Every quantitative summary claim cites validated evidence; unavailable details stay
   unavailable and inference is never promoted to a reported fact.
-- Drafts, evidence packets, decisions, publications, releases, and delivery records are
-  immutable or concurrency-safe, revision-aware, and replayable.
+- Draft Summaries, Evidence Packets, decisions, publications, releases, and delivery
+  records are immutable or concurrency-safe, revision-aware, and replayable.
 - Gate 2 approval declassifies through a positive allowlist, remaps public evidence IDs,
   and seals exact Markdown bytes plus a SHA-256 digest before delivery.
 - Public output excludes private IDs, raw abstracts/evidence, evidence hashes, prompts,
@@ -119,7 +127,8 @@ A malformed record or unavailable enrichment endpoint is quarantined and reporte
 without erasing successful records. Non-shadow discovery with any source issue stops
 before state mutation or Gate 1; shadow runs may report partial coverage without
 mutation. Outbound clients pace hosts and bound transient/429 retries. Provider errors
-never trigger hidden failover. Invalid synthesis stays private and retryable. Storage
+never trigger hidden failover or automatic paid-call replay. Invalid synthesis stays
+private and retryable only through the recorded reconciliation protocol. Storage
 corruption, root ambiguity, divergent sealed bytes, and delivery scope conflicts fail
 closed because partial gate transitions are unsafe.
 

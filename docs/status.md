@@ -22,9 +22,13 @@ merged/validated.
 - The remote `Kuanhao-Chao/DeepGeno.watch-state` repository does not yet exist. No App,
   secret, environment, ruleset, live operation, or production data was created from
   this implementation branch.
-- Public scheduled ingestion run `33325412494` (created 2026-08-30) failed safely at
+- Public scheduled ingestion run `33430925647` (created 2026-08-31) failed safely at
   **Confirm private repository boundary** and skipped discovery, demonstrating that no
   private state was written publicly.
+- The production commit's `verify` and `Workers Builds: deepgeno-watch` checks remain
+  successful. The newest CI failure is isolated to Dependabot PR #4, which proposes
+  TypeScript 7/Vitest 4 and is not this activation branch. Public rulesets and legacy
+  branch protection are both still absent and remain activation work.
 
 ## Implemented on this branch
 
@@ -50,6 +54,15 @@ merged/validated.
   pre-mutation `gh` capability checks, exact repository validation, confirmed seed and
   App boundaries, browser-only provider keys, PEM stdin streaming, and a scoped
   preflight run. It is statically tested and is not run automatically.
+- Durable paid-call requests that push `prepared` and one-use `armed` states before
+  dispatch, mark uncertain outcomes `ambiguous`, require explicit timestamp-guarded
+  reconciliation, and pass a stable OpenAI idempotency key.
+- A protected non-generative model-access probe and a private controlled-scan compiler
+  that validates the approved 1/9/4 decision counts, defers unknown candidates, and
+  stops if the selected paper is absent without publishing the private decision list.
+- One canonical public-paper schema shared by contracts and Astro, with YAML date
+  adaptation isolated at the content-loader boundary and consistent Evidence Reference
+  terminology.
 - Updated architecture, operations, security, Cloudflare, and companion documentation,
   plus ADR 0003 for the two-repository topology.
 
@@ -77,14 +90,16 @@ merged/validated.
    `DEEPGENO_LIVE_INGESTION_ENABLED=false`.
 4. Add the public pull-request-only ruleset requiring `CI / verify`, with no App bypass.
    Do not require the conditional Cloudflare check universally.
-5. Probe the selected model without summary generation, run the approved fixed-date
-   discovery, and require zero source issues. If the selected paper is absent, stop.
-6. Carry only the approved paper through private Gate 1 and Gate 2, create the one-file
-   public PR, and wait for human merge.
-7. Explicitly enable Cloudflare Access for Worker Preview URLs, then verify the intended
-   reviewer can enter and an unauthenticated request is denied. Verify production
-   catalog growth from zero to one. Enable scheduled private ingestion only after that
-   publication succeeds.
+5. Commit the approved decision manifest only to the private companion, probe the
+   selected model without summary generation, run the approved fixed-date discovery,
+   and require zero source issues. Compile the Gate 1 body with the strict 1/9/4 plan;
+   if the selected paper is absent, stop.
+6. Carry only the approved paper through private Gate 1. Before Gate 2 can create the
+   first public delivery PR, explicitly enable Cloudflare Access for Worker Preview URLs
+   and verify the intended reviewer can enter while an unauthenticated request is denied.
+7. Approve Gate 2, create the one-file public PR, and wait for human merge. Verify
+   production catalog growth from zero to one. Enable scheduled private ingestion only
+   after that publication succeeds.
 
 ## Known provisioning limits
 

@@ -3,7 +3,7 @@
 DeepGeno.watch is a human-gated literature discovery and publishing system for
 computational genomics, biological sequence models, and sequence-to-function work. It
 discovers and ranks papers privately, synthesizes only explicit selections, and
-publishes only reviewed summaries.
+publishes only human-approved Published Summaries.
 
 ```text
 official scholarly sources
@@ -29,7 +29,7 @@ The repository boundary is part of the security model:
 - `packages/contracts` — strict JSON-compatible Zod contracts shared by adapters.
 - `packages/literature` — lifecycle, source/model adapters, state ports, and CLI.
 - `apps/web` — Astro 7 static catalog, reading list, feed, and JSON export.
-- `content/public/papers` — reviewed, declassified publication documents only.
+- `content/public/papers` — declassified, human-approved Published Summary Markdown only.
 - `config` — sources, taxonomy, relevance policy, journals, and model examples.
 - `prompts` — versioned relevance and synthesis instructions.
 - `templates/private-ops` — the allowlisted private companion skeleton.
@@ -60,10 +60,10 @@ cross-provider failover, so provenance, failures, and spend remain auditable.
    complete-abstract candidates, and opens a private Gate 1 review pull request.
 2. The curator chooses exactly Summarize, Defer, or Dismiss for every candidate. A
    trusted private-main workflow records a merged review.
-3. Selected papers receive a legally scoped evidence packet and one structured model
-   call. Each immutable draft receives its own private Gate 2 pull request.
+3. Selected papers receive a legally scoped Evidence Packet and one structured model
+   call. Each immutable Draft Summary receives its own private Gate 2 pull request.
 4. Approve, Request revision, or Dismiss records the human decision. Revision creates a
-   new immutable draft from the same evidence and explicit feedback.
+   new immutable Draft Summary from the same evidence and explicit feedback.
 5. Approval seals deterministic declassified Markdown and a delivery record privately.
    Delivery opens or reuses a public pull request changing exactly one
    `content/public/papers/<slug>.md` file.
@@ -71,8 +71,10 @@ cross-provider failover, so provenance, failures, and spend remain auditable.
    schema, build, and privacy contract before Cloudflare deploys the merge.
 
 Canonical identifiers, input digests, immutable revisions, sealed releases, and
-reconciled outbox states make retries idempotent without repeating model calls or
-duplicating branches and pull requests.
+reconciled outbox states make retries idempotent without duplicating branches or pull
+requests. Paid synthesis separately pushes prepared and one-use armed states before
+dispatch; uncertain provider outcomes block automatic replay until explicit curator
+reconciliation, and OpenAI also receives the stable request ID as an idempotency key.
 
 ## Private companion setup
 

@@ -35,18 +35,23 @@ export class OpenAiStructuredModel implements StructuredModel {
   async generate(
     request: StructuredModelRequest,
   ): Promise<StructuredModelResponse> {
-    const response = await this.#client.responses.parse({
-      model: this.model,
-      input: [
-        { role: "system", content: request.system },
-        { role: "user", content: request.prompt },
-      ],
-      text: {
-        format: zodTextFormat(request.outputSchema, request.schemaName),
+    const response = await this.#client.responses.parse(
+      {
+        model: this.model,
+        input: [
+          { role: "system", content: request.system },
+          { role: "user", content: request.prompt },
+        ],
+        text: {
+          format: zodTextFormat(request.outputSchema, request.schemaName),
+        },
+        store: false,
+        max_output_tokens: this.#maxOutputTokens,
       },
-      store: false,
-      max_output_tokens: this.#maxOutputTokens,
-    });
+      request.idempotencyKey
+        ? { idempotencyKey: request.idempotencyKey }
+        : undefined,
+    );
     if (
       response.output_parsed === null ||
       response.output_parsed === undefined

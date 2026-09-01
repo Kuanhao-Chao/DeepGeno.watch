@@ -544,6 +544,19 @@ describe("private companion setup wizard", () => {
     expect(stages).toContain("Task 5");
     expect(stages).not.toMatch(/^\s*gh secret delete\b/m);
   });
+
+  it("places verified Preview Access before the first preview-producing public delivery", async () => {
+    const stages = await wizardStages();
+    const accessGate = stages.indexOf(
+      "Enable Cloudflare Access for Worker Preview URLs",
+    );
+    const firstDelivery = stages.indexOf(
+      "Only after Preview Access passes, allow Gate 2 approval to open the first one-file public PR",
+    );
+
+    expect(accessGate).toBeGreaterThan(0);
+    expect(firstDelivery).toBeGreaterThan(accessGate);
+  });
 });
 
 async function wizardStages(): Promise<string> {

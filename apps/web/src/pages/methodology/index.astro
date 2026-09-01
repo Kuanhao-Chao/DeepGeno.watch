@@ -15,8 +15,8 @@ import PageLayout from '../../layouts/PageLayout.astro';
       <li><span>Monitor</span><p>Official APIs surface source records from preprint servers, bibliographic indexes, and selected journals.</p></li>
       <li><span>Normalize</span><p>Records are deduplicated, tagged, and ranked. A complete abstract is required before triage.</p></li>
       <li class="pipeline__gate"><span>Human gate 1</span><p>A curator chooses exactly one action: Summarize, Defer, or Dismiss. Candidate data stays private.</p></li>
-      <li><span>Synthesize</span><p>The selected paper becomes an evidence packet. A configured model produces a strict structured draft with claim-level evidence IDs.</p></li>
-      <li class="pipeline__gate"><span>Human gate 2</span><p>One pull request per paper exposes the draft, evidence depth, provider, model, and integrity metadata for review.</p></li>
+      <li><span>Synthesize</span><p>The selected Paper becomes an Evidence Packet. A configured model produces a strict Draft Summary with claim-level evidence IDs.</p></li>
+      <li class="pipeline__gate"><span>Human gate 2</span><p>One pull request per Paper exposes the Draft Summary, evidence depth, provider, model, and integrity metadata for review.</p></li>
       <li><span>Publish</span><p>Merging that pull request creates a canonical public record and triggers a fresh static build.</p></li>
     </ol>
   </section>
@@ -41,7 +41,7 @@ import PageLayout from '../../layouts/PageLayout.astro';
     <p class="section-number">03</p>
     <h2 id="evidence-title">Evidence depth</h2>
     <p>
-      Each public summary states the strongest material available when it was drafted. “Abstract
+      Each Published Summary states the strongest material available when it was drafted. “Abstract
       only” means no accessible full text informed the synthesis. “Partial full text” means some
       body material was available. “Full text” means the main paper was available through a lawful
       source such as open-access JATS, HTML, or PDF.

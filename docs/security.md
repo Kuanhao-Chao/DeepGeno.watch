@@ -45,6 +45,15 @@ stored. The App PEM is streamed by stdin to the private repository secret and is
 printed, copied, or held in a shell variable. Any legacy public
 `DEEPGENO_GITHUB_TOKEN` is removed manually only after validated cutover.
 
+Every paid synthesis is split across durable private commits. A prepared request is
+pushed first; its one-use armed state is pushed before provider dispatch; completion or
+ambiguity is pushed afterward. Git stores only the execution-token digest. Runner loss
+therefore leaves a state that cannot automatically dispatch again, and an ambiguous
+provider result requires an operator note plus compare-and-swap timestamp after
+provider-history inspection. OpenAI requests additionally carry the stable synthesis
+request ID as their provider idempotency key. Private automation also redacts the raw
+one-use token from subprocess command and captured-output diagnostics.
+
 The private triage workflow deliberately uses `pull_request_target`, but its job is
 secret-free, checks out literal private `main`, disables credential persistence, and
 never executes a pull-request branch or interpolates event fields into shell. Synthesis
@@ -77,8 +86,8 @@ public-only token and an exact-head compare-and-swap.
   `apps/web/public/_headers`.
 - Production `workers.dev` remains public. Worker Preview URL Access is pending and
   unverified because this branch made no Cloudflare change; activation must explicitly
-  enable Access for the intended reviewer policy and verify that an unauthenticated
-  preview request is denied.
+  enable Access for the intended reviewer policy and verify authorized entry plus
+  unauthenticated denial before Gate 2 can create the first public delivery PR.
 
 The companion renderer is a provisioning tool for a standard clone on one filesystem
 under one trusted operator. It rejects symlinked paths and linked-worktree `.git` files.

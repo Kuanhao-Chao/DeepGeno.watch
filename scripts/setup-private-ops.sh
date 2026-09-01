@@ -545,6 +545,8 @@ step "Confirm $STATE_REPOSITORY is private, on main, and has a green preflight a
 step "Confirm the curator App is installed on exactly the private and public repositories, with no bypass of public branch protection."
 step "Confirm synthesis has exactly the selected provider key and DEEPGENO_LIVE_INGESTION_ENABLED is still false."
 step "Confirm the public repository contains no operational literature workflows or private state."
+step "Enable Cloudflare Access for Worker Preview URLs, then verify the intended reviewer can enter and an unauthenticated request is denied."
+step "Only after Preview Access passes, allow Gate 2 approval to open the first one-file public PR."
 step "Keep the existing deepgeno-watch Worker, production URL, and configuration connected only to $PUBLIC_REPOSITORY; never connect the companion."
 step "After Task 5 validates cutover, remove legacy DEEPGENO_GITHUB_TOKEN from the public repository in GitHub Settings; deletion is deliberately not executable here."
 warn "Do not dispatch live ingestion, merge either human gate, alter the public ruleset, or remove legacy credentials from this wizard."

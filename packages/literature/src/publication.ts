@@ -51,7 +51,7 @@ export function buildPublication(
   },
 ): PublishedPaper {
   const slug = `${slugify(paper.title)}-${sha256(paper.id).slice(0, 7)}`;
-  const citations = draft.evidence.references.map((reference) => {
+  const references = draft.evidence.references.map((reference) => {
     const document = draft.evidence.documents.find(
       (entry) => entry.id === reference.documentId,
     );
@@ -84,7 +84,7 @@ export function buildPublication(
         : {}),
       ...(options.commitSha ? { commitSha: options.commitSha } : {}),
     },
-    evidence: { scope: draft.evidence.scope, citations },
+    evidence: { scope: draft.evidence.scope, references },
   });
 }
 
@@ -98,8 +98,8 @@ export function toPublicFrontmatter(
     (identifier) => identifier.type === "doi",
   )?.value;
   const evidenceIds = new Map(
-    publication.evidence.citations.map((citation, index) => [
-      citation.id,
+    publication.evidence.references.map((reference, index) => [
+      reference.id,
       `e${index + 1}`,
     ]),
   );
@@ -143,11 +143,11 @@ export function toPublicFrontmatter(
     evidence: {
       scope: publication.evidence.scope,
       fullTextAvailable: publication.evidence.scope !== "abstract-only",
-      sources: publication.evidence.citations.map((citation, index) => ({
+      references: publication.evidence.references.map((reference, index) => ({
         id: `e${index + 1}`,
-        documentKind: citation.documentKind,
-        sourceUrl: citation.sourceUrl,
-        locator: citation.locator,
+        documentKind: reference.documentKind,
+        sourceUrl: reference.sourceUrl,
+        locator: reference.locator,
       })),
     },
     coreProblem: remapStatement(summary.coreProblem),
