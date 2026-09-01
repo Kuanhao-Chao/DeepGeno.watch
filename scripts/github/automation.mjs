@@ -9,15 +9,26 @@ import { fileURLToPath } from "node:url";
 import {
   CANDIDATE_LABEL,
   PRIVATE_PREFIX,
-  PUBLIC_PAPER_PREFIX,
   SUMMARY_LABEL,
+  assertMergedByCurator,
+  assertPrivateStateRemote,
+  assertPrivateStateCheckout,
   assertPrivateRepository,
+  automationWorkingDirectory,
   branchToken,
+  buildLiteratureInvocation,
+  executeApprovedPublication,
+  executeDurableSynthesis,
+  executeStagedDiscovery,
   extractReviewId,
+  formatCommandFailure,
   parseJsonLine,
+  privateGhArguments,
+  probeModelAccess,
   pullRequestMetadata,
   readEvent,
   relevantPullRequestKind,
+  resolveAutomationRoots,
   resolveDiscoveryWindows,
   validateChangedPaths,
   validateModelEnvironment,
@@ -25,13 +36,13 @@ import {
   validateSelectedPaperLimit,
 } from "./workflow-lib.mjs";
 
-const root = process.cwd();
+const roots = resolveAutomationRoots(process.env, process.cwd());
 const runnerTemp = resolve(
   process.env.RUNNER_TEMP || tmpdir(),
   "deepgeno-watch",
 );
 
-async function main() {
+export async function main() {
   const command = process.argv[2];
   await mkdir(runnerTemp, { recursive: true });
   if (command === "assert-private") return assertPrivate();
@@ -41,16 +52,27 @@ async function main() {
   if (command === "record-summary") return recordSummary();
   if (command === "validate-model")
     return validateModelEnvironment(process.env);
+  if (command === "probe-model") return probeModel();
   if (command === "synthesize") return synthesize();
   if (command === "publish-approved") return publishApproved();
   throw new Error(
-    "Usage: automation.mjs <assert-private|triage-check|ingest|record-triage|record-summary|validate-model|synthesize|publish-approved>",
+    "Usage: automation.mjs <assert-private|triage-check|ingest|record-triage|record-summary|validate-model|probe-model|synthesize|publish-approved>",
   );
 }
 
 async function assertPrivate() {
-  assertPrivateRepository(await githubEvent());
+  const event = await githubEvent();
+  await assertBoundPrivateState(event);
   console.log("Private repository boundary confirmed.");
+}
+
+async function probeModel() {
+  const event = await githubEvent();
+  await assertBoundPrivateState(event);
+  const result = await probeModelAccess(process.env);
+  console.log(
+    `Configured ${result.provider} model access confirmed: ${result.model}.`,
+  );
 }
 
 async function triageCheck() {
@@ -62,7 +84,7 @@ async function triageCheck() {
     );
     return;
   }
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const metadata = pullRequestMetadata(event);
   const { id } = extractReviewId(metadata.body, kind);
   const bodyFile = await writePullRequestBody(
@@ -72,8 +94,6 @@ async function triageCheck() {
   const decidedAt = metadata.updatedAt || new Date().toISOString();
   if (kind === "candidate") {
     const result = literature("apply-triage", [
-      "--root",
-      ".",
       "--batch",
       id,
       "--body-file",
@@ -91,8 +111,6 @@ async function triageCheck() {
     );
   } else {
     literature("apply-draft", [
-      "--root",
-      ".",
       "--draft",
       id,
       "--body-file",
@@ -110,7 +128,7 @@ async function triageCheck() {
 
 async function ingest() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const shadow = parseBoolean(process.env.INPUT_SHADOW || "false", "shadow");
   const trigger =
     process.env.GITHUB_EVENT_NAME === "schedule"
@@ -125,54 +143,80 @@ async function ingest() {
     backfillDays: process.env.INPUT_BACKFILL_DAYS || 0,
     maxWindowDays: Number(process.env.INPUT_BATCH_DAYS || 30),
   });
-  if (!shadow) configureGit();
-
-  for (const window of windows) {
-    if (!shadow) switchToMain();
-    const result = literature("discover", [
-      "--root",
-      ".",
-      "--from",
-      window.from,
-      "--to",
-      window.through,
-      "--trigger",
-      trigger,
-    ]);
-    const candidateCount = requireNonNegativeInteger(
-      result.candidateCount,
-      "candidateCount",
-    );
-    const batchRevision = requirePositiveInteger(
-      result.batchRevision,
-      "batchRevision",
-    );
-    console.log(
-      `Discovery ${window.from}…${window.through}: ${candidateCount} candidate(s)${shadow ? " (shadow)" : ""}.`,
-    );
-    reportSourceIssues(result.sourceIssues);
-    if (shadow) continue;
-
-    const reviewPath = validatePrivateReviewPath(result.reviewPath);
-    const changedPaths = validateChangedPaths(result.changedPaths, [
-      PRIVATE_PREFIX,
-    ]);
-    const statePaths = changedPaths.filter((path) => path !== reviewPath);
-    commitAndPush(
-      statePaths,
-      `chore(literature): record candidate batch ${result.batchId}`,
-    );
-    if (candidateCount === 0) continue;
-    await openReviewPullRequest({
-      branch: `literature/candidates/${branchToken(`${result.batchId}-r${batchRevision}`)}`,
-      label: CANDIDATE_LABEL,
-      labelDescription: "Private daily literature candidate inbox",
-      labelColor: "2f7d74",
-      title: `Literature candidates · ${window.through}`,
-      reviewPath,
-      commitMessage: `review: triage candidate batch ${result.batchId}`,
-    });
-  }
+  await executeStagedDiscovery({
+    stateRoot: roots.stateRoot,
+    runnerTemp,
+    shadow,
+    discover: async (stagedStateRoot) => {
+      const reports = [];
+      for (const window of windows) {
+        const result = literature(
+          "discover",
+          ["--from", window.from, "--to", window.through, "--trigger", trigger],
+          { stateRoot: stagedStateRoot },
+        );
+        const candidateCount = requireNonNegativeInteger(
+          result.candidateCount,
+          "candidateCount",
+        );
+        const batchRevision = requirePositiveInteger(
+          result.batchRevision,
+          "batchRevision",
+        );
+        const reviewPath = validatePrivateReviewPath(result.reviewPath);
+        const changedPaths = validateChangedPaths(result.changedPaths, [
+          PRIVATE_PREFIX,
+        ]).filter(
+          (changedPath) => candidateCount > 0 || changedPath !== reviewPath,
+        );
+        console.log(
+          `Discovery ${window.from}…${window.through}: ${candidateCount} candidate(s)${shadow ? " (shadow)" : ""}.`,
+        );
+        reportSourceIssues(result.sourceIssues);
+        reports.push({
+          ...result,
+          window,
+          candidateCount,
+          batchRevision,
+          reviewPath,
+          changedPaths,
+        });
+      }
+      return reports;
+    },
+    accept: async (reports) => {
+      configureGit();
+      switchToMain();
+      const reviewPaths = new Set(
+        reports
+          .filter((report) => report.candidateCount > 0)
+          .map((report) => report.reviewPath),
+      );
+      const statePaths = [
+        ...new Set(
+          reports
+            .flatMap((report) => report.changedPaths)
+            .filter((changedPath) => !reviewPaths.has(changedPath)),
+        ),
+      ];
+      await commitAndPush(
+        statePaths,
+        `chore(literature): record discovery ${windows[0]?.from} through ${windows.at(-1)?.through}`,
+      );
+      for (const report of reports) {
+        if (report.candidateCount === 0) continue;
+        await openReviewPullRequest({
+          branch: `literature/candidates/${branchToken(`${report.batchId}-r${report.batchRevision}`)}`,
+          label: CANDIDATE_LABEL,
+          labelDescription: "Private daily literature candidate inbox",
+          labelColor: "2f7d74",
+          title: `Literature candidates · ${report.window.through}`,
+          reviewPath: report.reviewPath,
+          commitMessage: `review: triage candidate batch ${report.batchId}`,
+        });
+      }
+    },
+  });
 }
 
 async function recordTriage() {
@@ -185,8 +229,6 @@ async function recordTriage() {
     `candidate-${branchToken(batchId)}.md`,
   );
   const result = literature("apply-triage", [
-    "--root",
-    ".",
     "--batch",
     batchId,
     "--body-file",
@@ -209,7 +251,7 @@ async function recordTriage() {
     selected,
     process.env.DEEPGENO_MAX_SUMMARIES_PER_RUN,
   );
-  commitAndPush(
+  await commitAndPush(
     changedPaths,
     `chore(literature): record triage ${result.decisionBatchId}`,
   );
@@ -223,7 +265,7 @@ async function recordTriage() {
 
 async function synthesize() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   validateModelEnvironment(process.env);
   const paperId = requireSafeValue(
     process.env.INPUT_PAPER_ID,
@@ -233,30 +275,91 @@ async function synthesize() {
   if (revisionOf) requireSafeValue(revisionOf, "INPUT_REVISION_OF");
   configureGit();
   switchToMain();
-  const result = literature("synthesize", [
-    "--root",
-    ".",
-    "--paper",
-    paperId,
-    ...(revisionOf ? ["--revision-of", revisionOf] : []),
-  ]);
+  const result = await executeDurableSynthesis({
+    prepare: async () =>
+      literature("prepare-synthesis", [
+        "--paper",
+        paperId,
+        ...(revisionOf ? ["--revision-of", revisionOf] : []),
+      ]),
+    commitPrepared: async (prepared) => {
+      const changedPaths = validateChangedPaths(prepared.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const reviewPath =
+        prepared.requestState === "completed"
+          ? validatePrivateReviewPath(prepared.reviewPath)
+          : undefined;
+      await commitAndPush(
+        changedPaths.filter((path) => path !== reviewPath),
+        prepared.requestState === "completed"
+          ? `chore(literature): materialize draft ${requireSafeValue(prepared.draftId, "draftId")}`
+          : `chore(literature): prepare synthesis ${requireSafeValue(prepared.requestId, "requestId")}`,
+      );
+    },
+    arm: async (requestId) =>
+      literature("arm-synthesis", [
+        "--request",
+        requireSafeValue(requestId, "requestId"),
+      ]),
+    commitArmed: async (armed) => {
+      const changedPaths = validateChangedPaths(armed.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const pushed = await commitAndPush(
+        changedPaths,
+        `chore(literature): arm synthesis ${requireSafeValue(armed.requestId, "requestId")}`,
+      );
+      if (!pushed) {
+        throw new Error(
+          "Refusing model dispatch because armed synthesis state was not durably pushed",
+        );
+      }
+    },
+    dispatch: async ({ requestId, executionToken }) =>
+      literature("synthesize", [
+        "--request",
+        requireSafeValue(requestId, "requestId"),
+        "--execution-token",
+        requireSafeValue(executionToken, "executionToken"),
+      ]),
+    commitOutcome: async (outcome) => {
+      const changedPaths = validateChangedPaths(outcome.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      const reviewPath =
+        outcome.outcome === "completed"
+          ? validatePrivateReviewPath(outcome.reviewPath)
+          : undefined;
+      const pushed = await commitAndPush(
+        changedPaths.filter((path) => path !== reviewPath),
+        outcome.outcome === "completed"
+          ? `chore(literature): record draft ${requireSafeValue(outcome.draftId, "draftId")}`
+          : `chore(literature): record ambiguous synthesis ${requireSafeValue(outcome.requestId, "requestId")}`,
+      );
+      if (!pushed) {
+        throw new Error(
+          "Refusing to advance because the synthesis outcome was not durably pushed",
+        );
+      }
+    },
+  });
+  if (result.command === "synthesize" && result.outcome === "ambiguous") {
+    throw new Error(
+      `Synthesis ${requireSafeValue(result.requestId, "requestId")} has an ambiguous provider outcome; inspect provider records and explicitly reconcile before retrying`,
+    );
+  }
   const reviewPath = validatePrivateReviewPath(result.reviewPath);
-  const changedPaths = validateChangedPaths(result.changedPaths, [
-    PRIVATE_PREFIX,
-  ]);
-  const statePaths = changedPaths.filter((path) => path !== reviewPath);
-  commitAndPush(
-    statePaths,
-    `chore(literature): record draft ${result.draftId}`,
-  );
+  const draftId = requireSafeValue(result.draftId, "draftId");
+  const slug = requireSafeValue(result.slug, "slug");
   await openReviewPullRequest({
-    branch: `literature/summaries/${branchToken(result.draftId)}`,
+    branch: `literature/summaries/${branchToken(draftId)}`,
     label: SUMMARY_LABEL,
     labelDescription: "Private LLM summary awaiting human approval",
     labelColor: "795da3",
-    title: `Summary review · ${result.slug}`,
+    title: `Summary review · ${slug}`,
     reviewPath,
-    commitMessage: `review: inspect summary draft ${result.draftId}`,
+    commitMessage: `review: inspect summary draft ${draftId}`,
   });
 }
 
@@ -270,8 +373,6 @@ async function recordSummary() {
     `summary-${branchToken(draftId)}.md`,
   );
   const decisionArgs = [
-    "--root",
-    ".",
     "--draft",
     draftId,
     "--body-file",
@@ -311,7 +412,7 @@ async function recordSummary() {
   const changedPaths = validateChangedPaths(decision.changedPaths, [
     PRIVATE_PREFIX,
   ]);
-  commitAndPush(
+  await commitAndPush(
     changedPaths,
     `chore(literature): record summary decision ${draftId}`,
   );
@@ -323,40 +424,49 @@ async function recordSummary() {
 
 async function publishApproved() {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const draftId = requireSafeValue(
     process.env.INPUT_DRAFT_ID,
     "INPUT_DRAFT_ID",
   );
   configureGit();
   switchToMain();
-  const publication = literature("publish", [
-    "--root",
-    ".",
-    "--draft",
-    draftId,
-  ]);
-  let changedPaths = validateChangedPaths(publication.changedPaths, [
-    PRIVATE_PREFIX,
-    PUBLIC_PAPER_PREFIX,
-  ]);
-  const projection = literature("project", ["--root", "."]);
-  changedPaths = [
-    ...changedPaths,
-    ...validateChangedPaths(projection.changedPaths, [PUBLIC_PAPER_PREFIX]),
-  ];
-  run("npm", ["run", "build"]);
-  run("npm", ["run", "privacy"]);
-  commitAndPush(
-    [...new Set(changedPaths)],
-    `feat(literature): publish approved summary ${draftId}`,
-  );
-  console.log(`Published ${draftId} to ${publication.publicPath}.`);
+  const { delivery } = await executeApprovedPublication({
+    publish: async () => literature("publish", ["--draft", draftId]),
+    commitPending: async (publication) => {
+      const changedPaths = validateChangedPaths(publication.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      await commitAndPush(
+        [...new Set(changedPaths)],
+        `feat(literature): seal approved summary ${draftId}`,
+      );
+    },
+    verifyProject: async () => {
+      run("npm", ["run", "build"], {
+        cwd: automationWorkingDirectory("build", roots),
+      });
+      run("npm", ["run", "privacy"], {
+        cwd: automationWorkingDirectory("privacy", roots),
+      });
+    },
+    deliver: async (slug) => literature("deliver", ["--slug", slug]),
+    commitReceipt: async (result) => {
+      const deliveryPaths = validateChangedPaths(result.changedPaths, [
+        PRIVATE_PREFIX,
+      ]);
+      await commitAndPush(
+        deliveryPaths,
+        `chore(literature): record public delivery ${result.slug}`,
+      );
+    },
+  });
+  console.log(`Public delivery ${delivery.state}: ${delivery.pullRequestUrl}`);
 }
 
 async function mergedReviewEvent(expectedKind) {
   const event = await githubEvent();
-  assertPrivateRepository(event);
+  await assertBoundPrivateState(event);
   const kind = relevantPullRequestKind(event);
   if (kind !== expectedKind) {
     throw new Error(`Expected a merged ${expectedKind} review pull request`);
@@ -371,44 +481,63 @@ async function mergedReviewEvent(expectedKind) {
   ) {
     throw new Error("Pull request is not a complete merged event");
   }
+  assertMergedByCurator(event, process.env.DEEPGENO_CURATOR_GITHUB_LOGIN);
   return event;
 }
 
-function literature(command, args) {
-  const output = run(
-    "npm",
-    ["run", "--silent", "literature", "--", command, ...args],
-    {
-      capture: true,
-    },
-  );
+async function assertBoundPrivateState(event) {
+  assertPrivateRepository(event);
+  const bound = await assertPrivateStateCheckout({ roots, event });
+  roots.projectRoot = bound.projectRoot;
+  roots.stateRoot = bound.stateRoot;
+  roots.repository = bound.repository;
+}
+
+function literature(command, args, { stateRoot = roots.stateRoot } = {}) {
+  const invocation = buildLiteratureInvocation(command, args, roots, stateRoot);
+  const output = run(invocation.command, invocation.args, {
+    cwd: invocation.cwd,
+    capture: true,
+  });
   return parseJsonLine(output, command);
 }
 
 function configureGit() {
-  run("git", ["config", "user.name", "deepgeno-watch[bot]"]);
-  run("git", [
-    "config",
-    "user.email",
-    "41898282+github-actions[bot]@users.noreply.github.com",
-  ]);
+  const cwd = automationWorkingDirectory("git", roots);
+  run("git", ["config", "user.name", "deepgeno-watch[bot]"], { cwd });
+  run(
+    "git",
+    [
+      "config",
+      "user.email",
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    ],
+    { cwd },
+  );
 }
 
 function switchToMain() {
-  run("git", ["switch", "main"]);
+  run("git", ["switch", "main"], {
+    cwd: automationWorkingDirectory("git", roots),
+  });
 }
 
-function commitAndPush(paths, message) {
+async function commitAndPush(paths, message) {
   if (paths.length === 0) return false;
-  for (const path of paths) run("git", ["add", "--", path]);
+  const cwd = automationWorkingDirectory("git", roots);
+  for (const path of paths) run("git", ["add", "--", path], { cwd });
   const staged = spawnSync("git", ["diff", "--cached", "--quiet"], {
-    cwd: root,
+    cwd,
   });
   if (staged.status === 0) return false;
   if (staged.status !== 1)
     throw commandError("git diff --cached --quiet", staged);
-  run("git", ["commit", "-m", message]);
-  run("git", ["push", "origin", "HEAD:main"]);
+  run("git", ["commit", "-m", message], { cwd });
+  await assertPrivateStateRemote({
+    stateRoot: roots.stateRoot,
+    repository: roots.repository,
+  });
+  run("git", ["push", "origin", "HEAD:main"], { cwd });
   return true;
 }
 
@@ -424,7 +553,7 @@ async function openReviewPullRequest({
   const existing = JSON.parse(
     run(
       "gh",
-      [
+      privateGh([
         "pr",
         "list",
         "--state",
@@ -433,14 +562,16 @@ async function openReviewPullRequest({
         branch,
         "--json",
         "number,state,url,mergedAt",
-      ],
-      { capture: true },
+      ]),
+      { cwd: automationWorkingDirectory("gh", roots), capture: true },
     ) || "[]",
   );
   if (existing.length > 0) {
     const pullRequest = existing[0];
     if (pullRequest.state === "CLOSED" && !pullRequest.mergedAt) {
-      run("gh", ["pr", "reopen", String(pullRequest.number)]);
+      run("gh", privateGh(["pr", "reopen", String(pullRequest.number)]), {
+        cwd: automationWorkingDirectory("gh", roots),
+      });
       console.log(
         `Reopened ${pullRequest.url}; no duplicate review PR created.`,
       );
@@ -456,7 +587,7 @@ async function openReviewPullRequest({
     "git",
     ["ls-remote", "--exit-code", "--heads", "origin", branch],
     {
-      cwd: root,
+      cwd: automationWorkingDirectory("git", roots),
       encoding: "utf8",
     },
   );
@@ -465,25 +596,36 @@ async function openReviewPullRequest({
   }
   if (remote.status === 2) {
     switchToMain();
-    run("git", ["switch", "-c", branch]);
-    run("git", ["add", "--", reviewPath]);
-    run("git", ["commit", "-m", commitMessage]);
-    run("git", ["push", "--set-upstream", "origin", branch]);
+    const gitCwd = automationWorkingDirectory("git", roots);
+    run("git", ["switch", "-c", branch], { cwd: gitCwd });
+    run("git", ["add", "--", reviewPath], { cwd: gitCwd });
+    run("git", ["commit", "-m", commitMessage], { cwd: gitCwd });
+    await assertPrivateStateRemote({
+      stateRoot: roots.stateRoot,
+      repository: roots.repository,
+    });
+    run("git", ["push", "--set-upstream", "origin", branch], {
+      cwd: gitCwd,
+    });
   }
 
-  run("gh", [
-    "label",
-    "create",
-    label,
-    "--description",
-    labelDescription,
-    "--color",
-    labelColor,
-    "--force",
-  ]);
+  run(
+    "gh",
+    privateGh([
+      "label",
+      "create",
+      label,
+      "--description",
+      labelDescription,
+      "--color",
+      labelColor,
+      "--force",
+    ]),
+    { cwd: automationWorkingDirectory("gh", roots) },
+  );
   const url = run(
     "gh",
-    [
+    privateGh([
       "pr",
       "create",
       "--base",
@@ -496,23 +638,28 @@ async function openReviewPullRequest({
       reviewPath,
       "--label",
       label,
-    ],
-    { capture: true },
+    ]),
+    { cwd: automationWorkingDirectory("gh", roots), capture: true },
   ).trim();
   console.log(`Opened ${url}`);
   switchToMain();
   return url;
 }
 
-function run(command, args, { capture = false } = {}) {
+function privateGh(args) {
+  return privateGhArguments(roots.repository, args);
+}
+
+function run(command, args, { cwd, capture = false }) {
+  if (!cwd) throw new Error(`Working directory is required for ${command}`);
   const result = spawnSync(command, args, {
-    cwd: root,
+    cwd,
     env: process.env,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   if (result.status !== 0)
-    throw commandError(`${command} ${args.join(" ")}`, result);
+    throw new Error(formatCommandFailure(command, args, result));
   if (capture && result.stderr) process.stderr.write(result.stderr);
   return capture ? result.stdout : "";
 }

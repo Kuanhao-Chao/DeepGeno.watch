@@ -1,135 +1,125 @@
 # DeepGeno.watch
 
 DeepGeno.watch is a human-gated literature discovery and publishing system for
-computational genomics, biological sequence models, and sequence-to-function work.
-It continuously discovers papers, prepares a private ranked inbox with complete
-abstracts, synthesizes only explicitly selected papers, and publishes only summaries
-that a curator merges.
+computational genomics, biological sequence models, and sequence-to-function work. It
+discovers and ranks papers privately, synthesizes only explicit selections, and
+publishes only human-approved Published Summaries.
 
 ```text
 official scholarly sources
-  → normalize · deduplicate · rank · tag
-  → private candidate pull request (Gate 1)
-  → evidence packet · structured LLM synthesis
-  → one private summary pull request per paper (Gate 2)
-  → approved Astro collection
-  → Cloudflare Workers Static Assets
+  → private DeepGeno.watch-state repository
+      pinned public engine + private candidate/evidence/review state
+      Gate 1 selection → structured synthesis → Gate 2 approval
+      sealed declassified release + delivery outbox
+  → one-file pull request to public DeepGeno.watch
+  → human merge → Astro catalog → existing Cloudflare Worker
 ```
 
-The public site is fully static. Private abstracts, evidence packets, model inputs,
-and editorial decisions stay in `data/private` and are checked for build leakage.
+The repository boundary is part of the security model:
 
-## Workspace
+- Public `Kuanhao-Chao/DeepGeno.watch` owns source code, policies, prompts, approved
+  public Markdown, CI, and Cloudflare configuration.
+- Private `Kuanhao-Chao/DeepGeno.watch-state` owns abstracts, evidence, model records,
+  review state, sealed releases, outbox records, workflow wrappers, and secrets.
+- Cloudflare connects only to the public repository. Private operational workflows and
+  `data/private/**` never live in this repository.
 
-- `packages/contracts` — JSON-compatible Zod contracts shared by every adapter.
-- `packages/literature` — the deep lifecycle module, source/model adapters, review
-  parsing, Git-file state, and CLI.
-- `apps/web` — Astro 7 static catalog, reading list, feed, and machine-readable export.
-- `data/private` — authoritative private candidates, evidence, decisions, and cursors.
-- `content/public/papers` — human-approved public summary projection.
-- `config` — sources, taxonomy, relevance policy, journal list, and model examples.
+## Public workspace
+
+- `packages/contracts` — strict JSON-compatible Zod contracts shared by adapters.
+- `packages/literature` — lifecycle, source/model adapters, state ports, and CLI.
+- `apps/web` — Astro 7 static catalog, reading list, feed, and JSON export.
+- `content/public/papers` — declassified, human-approved Published Summary Markdown only.
+- `config` — sources, taxonomy, relevance policy, journals, and model examples.
 - `prompts` — versioned relevance and synthesis instructions.
-- `.github/workflows` — CI, discovery, and trusted post-merge synthesis automation.
+- `templates/private-ops` — the allowlisted private companion skeleton.
+- `scripts/github` — bootstrap, automation, delivery, and validation tools.
+- `.github/workflows/ci.yml` — public verification; operational workflows are absent.
 
-See [CONTEXT.md](./CONTEXT.md) for the domain language and
-[docs/architecture.md](./docs/architecture.md) for boundaries and lifecycle rules.
-The current implementation/activation checklist lives in
-[docs/status.md](./docs/status.md).
+See [CONTEXT.md](./CONTEXT.md) for domain language,
+[docs/architecture.md](./docs/architecture.md) for system boundaries, and
+[docs/status.md](./docs/status.md) for the activation state.
 
-## Local setup
+## Local development
 
 Requirements: Node.js 22.18 or newer and npm 11.
 
 ```bash
 npm install
 npm run check
-npm run build
 npm run dev
 ```
 
-No LLM provider is selected by default. To synthesize, choose exactly one provider
-and model explicitly:
-
-```bash
-export DEEPGENO_MODEL_PROVIDER=openai
-export DEEPGENO_MODEL_NAME=your-explicit-openai-model-id
-export DEEPGENO_MODEL_MAX_OUTPUT_TOKENS=5000
-export OPENAI_API_KEY=...
-```
-
-or:
-
-```bash
-export DEEPGENO_MODEL_PROVIDER=anthropic
-export DEEPGENO_MODEL_NAME=your-explicit-model-id
-export DEEPGENO_MODEL_MAX_OUTPUT_TOKENS=5000
-export ANTHROPIC_API_KEY=...
-```
-
-There is no automatic cross-provider failover: a provider failure remains visible and
-retryable, which makes provenance and spending auditable.
+No model provider is selected by default. Local synthesis requires exactly one
+explicit provider, model, output ceiling, and matching key. There is no automatic
+cross-provider failover, so provenance, failures, and spend remain auditable.
 
 ## Editorial workflow
 
-1. The daily workflow retrieves overlapping source windows, upserts normalized source
-   records, and opens a dated candidate PR. A candidate is reviewable only when its
-   full abstract is present.
-2. In the PR body, choose exactly one of **Summarize**, **Defer**, or **Dismiss** for
-   every paper. Merging records those decisions.
-3. The trusted merged-PR workflow builds the best legally available evidence packet,
-   invokes the configured structured-output model once, validates the result, and
-   opens one summary PR per selected paper.
-4. In the summary PR, choose Approve, Request revision, or Dismiss. Approval also
-   records one reading priority and one progress state. A revision requires written
-   feedback and creates a new immutable draft/PR from the same evidence packet.
-5. Only an approved summary is projected publicly. The workflow builds and privacy
-   checks the static site before committing that projection to `main`.
+1. A private ingestion run retrieves overlapping source windows, normalizes and ranks
+   complete-abstract candidates, and opens a private Gate 1 review pull request.
+2. The curator chooses exactly Summarize, Defer, or Dismiss for every candidate. A
+   trusted private-main workflow records a merged review.
+3. Selected papers receive a legally scoped Evidence Packet and one structured model
+   call. Each immutable Draft Summary receives its own private Gate 2 pull request.
+4. Approve, Request revision, or Dismiss records the human decision. Revision creates a
+   new immutable Draft Summary from the same evidence and explicit feedback.
+5. Approval seals deterministic declassified Markdown and a delivery record privately.
+   Delivery opens or reuses a public pull request changing exactly one
+   `content/public/papers/<slug>.md` file.
+6. A human merges the public pull request. Public CI validates the one-file boundary,
+   schema, build, and privacy contract before Cloudflare deploys the merge.
 
-Source updates and replay are safe: canonical identifiers, revisioned candidates, and
-input digests make discovery and synthesis retries idempotent. Requested summary
-changes create a new immutable draft revision rather than mutating prior provenance.
+Canonical identifiers, input digests, immutable revisions, sealed releases, and
+reconciled outbox states make retries idempotent without duplicating branches or pull
+requests. Paid synthesis separately pushes prepared and one-use armed states before
+dispatch; uncertain provider outcomes block automatic replay until explicit curator
+reconciliation, and OpenAI also receives the stable request ID as an idempotency key.
+
+## Private companion setup
+
+After this implementation is merged to public `main` and `CI / verify` is green, run
+the committed, browser-guided setup from a clean standard clone:
+
+```bash
+./scripts/setup-private-ops.sh
+```
+
+Its eight confirmed stages validate a current GitHub CLI, create or validate the exact
+private companion, pin and render the public engine, configure repository and protected
+environment values, guide a least-privilege two-repository GitHub App, persist only its
+client ID/key, run the private token-scope preflight, and stop at the cutover checklist.
+It does not dispatch live ingestion, merge review gates, change public rules, or alter
+Cloudflare. The current system `gh` 0.11.0 is too old; upgrade GitHub CLI and restart
+the shell before running the wizard.
+
+The initial synthesis configuration is `openai` / `gpt-5.6-terra`, 5,000 output
+tokens, and at most one summary per run. The provider key is copied browser-to-browser
+into the protected private `synthesis` environment and is never entered into the
+wizard. Private-environment secrets and variables require an eligible paid GitHub plan;
+setup stops if those controls are unavailable and never falls back to repository or
+public provider secrets. Restrict the environment to `main`. Add the curator as a
+required reviewer only when the private-repository plan supports it, and leave
+**Prevent self-review** disabled so the sole curator cannot deadlock the approval path.
+Daily mutation remains disabled until the controlled first publication passes.
 
 ## Deployment
 
-Connect the private GitHub repository to the existing Cloudflare Worker
-`deepgeno-watch` through Workers Builds with:
+The existing public `deepgeno-watch` Worker deploys `Kuanhao-Chao/DeepGeno.watch`
+`main` as Workers Static Assets using the checked-in `wrangler.jsonc`. Preserve its
+name, URL, build/deploy commands, and build variables. Never connect
+`DeepGeno.watch-state` to Cloudflare.
 
-- Production branch: `main`
-- Root directory: repository root
-- Build command: `npm run build`
-- Production deploy command: `npx wrangler deploy`
-- Preview deploy command: `npx wrangler versions upload`
-- Node version: `22.18.0`
-- Build-time `PUBLIC_SITE_URL`: `https://deepgeno-watch.khchao.workers.dev`
-- Build watch includes: `apps/web/*`, `content/public/*`, `packages/contracts/*`,
-  `scripts/reset-web-content-cache.mjs`, `scripts/static-artifact-check.mjs`,
-  `package.json`, `package-lock.json`, `.nvmrc`, `tsconfig.base.json`, and
-  `wrangler.jsonc`
-- Build watch excludes: `data/private/*`
-
-Literature review branches touch only excluded private paths, so Workers Builds should
-skip them. Enable non-production branch builds for web/code previews and protect
-Preview URLs with Cloudflare Access. The checked-in `wrangler.jsonc` is the deployment
-contract for the asset-only Worker. Full setup, smoke tests, and failure recovery are in
+Public `main` is pull-request-only and requires `CI / verify`. The Cloudflare check is
+conditional because build-watch paths may legitimately skip non-site changes, so it is
+verified for publication merges but is not a universal required context. Full setup
+and recovery instructions are in
 [docs/cloudflare-workers.md](./docs/cloudflare-workers.md).
-
-The remaining dashboard, provider-secret, and first live Gate 1 steps are available as
-a resumable browser-guided wizard:
-
-```bash
-./scripts/activate-production.sh
-```
-
-The wizard never reads an API key into the terminal and leaves the final workflow
-dispatch under curator control.
 
 ## Operating budget
 
-The default policy expects 10–30 daily candidates but makes zero synthesis calls before
-Gate 1. One canonical summary powers every public depth. The $15/month value in the
-reference model config is a planning target, not a billing guarantee; configure a
-provider-side enforced spend limit plus alerts as the monthly control. The workflow
-also caps selected summaries per run.
-The production-policy limits are 20 new summaries per Gate 1 merge and 5,000 output
-tokens per model call; both are explicit GitHub variables. During initial activation,
-the repository summary ceiling is deliberately pinned to 1.
+Discovery is free of model calls until Gate 1. One canonical structured summary powers
+every public depth. During activation the companion caps summaries at 1 per run; after
+the first production publication and observed daily cycles, the normal policy ceiling
+may return to 20. Provider-side spend limits and alerts remain the authoritative
+monthly control.

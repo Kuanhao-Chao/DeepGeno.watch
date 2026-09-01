@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { privateMarkerPattern } from "./privacy-patterns.mjs";
+import {
+  privateMarkerPattern,
+  publicProvenanceLeakPattern,
+} from "./privacy-patterns.mjs";
 
 describe("public build boundary", () => {
   it("does not let the web source import private workflow state", async () => {
@@ -23,5 +26,15 @@ describe("public build boundary", () => {
         "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
       ),
     ).toBe(true);
+  });
+
+  it("recognizes private provenance fields in rendered public output", () => {
+    expect(publicProvenanceLeakPattern.test('"draftId":"draft-1"')).toBe(true);
+    expect(publicProvenanceLeakPattern.test('"contentSha256":"abc"')).toBe(
+      true,
+    );
+    expect(publicProvenanceLeakPattern.test('"approvedAt":"2026-08-28"')).toBe(
+      false,
+    );
   });
 });

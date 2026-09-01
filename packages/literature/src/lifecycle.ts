@@ -20,14 +20,25 @@ import type {
   SourceFetchResult,
   StructuredModel,
 } from "./ports.js";
-import { generateTechnicalSummary, SUMMARY_PROMPT } from "./prompt.js";
+import {
+  generatePreparedTechnicalSummary,
+  prepareTechnicalSummary,
+  SUMMARY_PROMPT,
+} from "./prompt.js";
 import {
   buildPublication,
-  renderPublicMarkdown,
+  PublicDeclassifier,
   toPublicFrontmatter,
 } from "./publication.js";
+import { createPendingDelivery, sealPublicProjection } from "./release.js";
 import { renderCandidateReview, renderDraftReview } from "./review.js";
-import { GitFileStateStore, type StoredPaper } from "./store.js";
+import {
+  GitFileStateStore,
+  synthesisRequestId,
+  type StoredPaper,
+  type SynthesisRequest,
+  type SynthesisResult,
+} from "./store.js";
 import { sha256, stableJson } from "./util.js";
 
 export type DiscoverCommand = {
@@ -38,12 +49,32 @@ export type DiscoverCommand = {
 };
 export type SynthesizeCommand = {
   kind: "synthesize";
+  requestId: string;
+  executionToken: string;
+};
+export type PrepareSynthesisCommand = {
+  kind: "prepare-synthesis";
   paperId: string;
   revisionOfDraftId?: string;
 };
+export type ArmSynthesisCommand = {
+  kind: "arm-synthesis";
+  requestId: string;
+};
+export type ReconcileSynthesisCommand = {
+  kind: "reconcile-synthesis";
+  requestId: string;
+  expectedUpdatedAt: string;
+  note: string;
+};
 export type PublishCommand = { kind: "publish"; draftId: string };
 export type LiteratureCommand =
-  DiscoverCommand | SynthesizeCommand | PublishCommand;
+  | DiscoverCommand
+  | PrepareSynthesisCommand
+  | ArmSynthesisCommand
+  | SynthesizeCommand
+  | ReconcileSynthesisCommand
+  | PublishCommand;
 
 export type RunReport =
   | {
@@ -56,7 +87,26 @@ export type RunReport =
       sourceIssues: Array<{ source: string; code: string; message: string }>;
     }
   | {
+      command: "prepare-synthesis";
+      requestId: string;
+      requestState: "prepared" | "completed";
+      draftId: string;
+      paperId: string;
+      slug: string;
+      reviewPath?: string;
+      changedPaths: string[];
+    }
+  | {
+      command: "arm-synthesis";
+      requestId: string;
+      requestState: "armed";
+      executionToken: string;
+      changedPaths: string[];
+    }
+  | {
       command: "synthesize";
+      requestId: string;
+      outcome: "completed";
       draftId: string;
       paperId: string;
       slug: string;
@@ -64,11 +114,26 @@ export type RunReport =
       changedPaths: string[];
     }
   | {
+      command: "synthesize";
+      requestId: string;
+      outcome: "ambiguous";
+      changedPaths: string[];
+    }
+  | {
+      command: "reconcile-synthesis";
+      requestId: string;
+      requestState: "prepared";
+      changedPaths: string[];
+    }
+  | {
       command: "publish";
       draftId: string;
       paperId: string;
       slug: string;
-      publicPath: string;
+      privatePublicationPath: string;
+      releasePath: string;
+      deliveryPath: string;
+      publicDigest: string;
       changedPaths: string[];
     };
 
@@ -153,7 +218,12 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
 
   async run(command: LiteratureCommand): Promise<RunReport> {
     if (command.kind === "discover") return this.#discover(command);
+    if (command.kind === "prepare-synthesis")
+      return this.#prepareSynthesis(command);
+    if (command.kind === "arm-synthesis") return this.#armSynthesis(command);
     if (command.kind === "synthesize") return this.#synthesize(command);
+    if (command.kind === "reconcile-synthesis")
+      return this.#reconcileSynthesis(command);
     return this.#publish(command);
   }
 
@@ -614,9 +684,9 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
     };
   }
 
-  async #synthesize(
-    command: SynthesizeCommand,
-  ): Promise<Extract<RunReport, { command: "synthesize" }>> {
+  async #prepareSynthesis(
+    command: PrepareSynthesisCommand,
+  ): Promise<Extract<RunReport, { command: "prepare-synthesis" }>> {
     invariant(
       this.#model,
       "model_required",
@@ -668,6 +738,12 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
         `Draft has no recorded revision request: ${revisionOf.id}`,
       );
     }
+    const draftRevision = revisionOf ? revisionOf.revision + 1 : 1;
+    const baseDraftId = `draft-${stored.paper.id}-r${stored.candidate.revision}`;
+    const draftId = revisionOf
+      ? `${baseDraftId}-v${draftRevision}`
+      : baseDraftId;
+    const requestId = synthesisRequestId(draftId);
     const existing = revisionOf
       ? drafts.find(
           (draft) =>
@@ -686,11 +762,41 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
         renderDraftReview(existing, stored.paper.title),
       );
       return {
-        command: "synthesize",
+        command: "prepare-synthesis",
+        requestId,
+        requestState: "completed",
         draftId: existing.id,
         paperId: stored.paper.id,
         slug: publicationSlug(stored.paper.title, stored.paper.id),
         reviewPath: this.#store.relative(reviewPath),
+        changedPaths: [],
+      };
+    }
+
+    const priorRequest = await this.#store.loadSynthesisRequest(requestId);
+    if (priorRequest) {
+      this.#assertPreparedRequestTarget(priorRequest, {
+        stored,
+        draftId,
+        draftRevision,
+        revisionOf,
+      });
+      if (priorRequest.state === "completed") {
+        return this.#materializeCompletedSynthesis(priorRequest, stored);
+      }
+      invariant(
+        priorRequest.state === "prepared",
+        "synthesis_reconciliation_required",
+        `Synthesis request ${requestId} is ${priorRequest.state}; inspect provider records and explicitly reconcile it before another model call`,
+      );
+      this.#validatePreparedRequestCompatibility(priorRequest, stored);
+      return {
+        command: "prepare-synthesis",
+        requestId,
+        requestState: "prepared",
+        draftId,
+        paperId: stored.paper.id,
+        slug: publicationSlug(stored.paper.title, stored.paper.id),
         changedPaths: [],
       };
     }
@@ -741,61 +847,245 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
         ).map((target) => this.#store.relative(target)),
       );
     }
-    const generated = await generateTechnicalSummary(
-      this.#model,
-      stored.paper,
-      evidence,
+    const prepared = prepareTechnicalSummary(stored.paper, evidence, {
+      ...(revisionDecision ? { revisionFeedback: revisionDecision.note } : {}),
+    });
+    const saved = await this.#store.prepareSynthesisRequest(
       {
+        paperId: stored.paper.id,
+        candidateId: stored.candidate.id,
+        candidateRevision: stored.candidate.revision,
+        draftId,
+        draftRevision,
+        ...(revisionOf ? { supersedesDraftId: revisionOf.id } : {}),
+        provider: this.#model.provider,
+        model: this.#model.model,
+        prompt: { ...SUMMARY_PROMPT, sha256: prepared.promptSha256 },
+        outputSchemaVersion: "1.0",
+        evidence,
         ...(revisionDecision
           ? { revisionFeedback: revisionDecision.note }
           : {}),
       },
+      now,
     );
-    const provider =
-      this.#model.provider === "fake" ? "openai" : this.#model.provider;
-    const draftRevision = revisionOf ? revisionOf.revision + 1 : 1;
-    const baseDraftId = `draft-${stored.paper.id}-r${stored.candidate.revision}`;
-    const draftCore = {
-      schemaVersion: "1.0" as const,
-      id: revisionOf ? `${baseDraftId}-v${draftRevision}` : baseDraftId,
-      revision: draftRevision,
-      ...(revisionOf ? { supersedesDraftId: revisionOf.id } : {}),
-      candidateId: stored.candidate.id,
-      candidateRevision: stored.candidate.revision,
+    if (saved.changed) changedPaths.push(this.#store.relative(saved.path));
+    return {
+      command: "prepare-synthesis",
+      requestId: saved.request.id,
+      requestState: "prepared",
+      draftId,
       paperId: stored.paper.id,
-      summary: generated.summary,
-      evidence,
-      generation: {
-        provider,
-        model: this.#model.model,
-        generatedAt: now,
-        prompt: { ...SUMMARY_PROMPT, sha256: generated.promptSha256 },
-        outputSchemaVersion: "1.0" as const,
-        inputSha256: evidence.inputSha256,
-        ...(generated.responseId ? { requestId: generated.responseId } : {}),
-        ...(generated.usage ? { usage: generated.usage } : {}),
-      },
+      slug: publicationSlug(stored.paper.title, stored.paper.id),
+      changedPaths: [...new Set(changedPaths)].sort(),
     };
-    const draft = DraftSummarySchema.parse({
-      ...draftCore,
-      recordSha256: sha256(stableJson(draftCore)),
+  }
+
+  async #armSynthesis(
+    command: ArmSynthesisCommand,
+  ): Promise<Extract<RunReport, { command: "arm-synthesis" }>> {
+    const armed = await this.#store.armSynthesisRequest(
+      command.requestId,
+      this.#clock().toISOString(),
+    );
+    return {
+      command: "arm-synthesis",
+      requestId: armed.request.id,
+      requestState: "armed",
+      executionToken: armed.executionToken,
+      changedPaths: [this.#store.relative(armed.path)],
+    };
+  }
+
+  async #synthesize(
+    command: SynthesizeCommand,
+  ): Promise<Extract<RunReport, { command: "synthesize" }>> {
+    invariant(
+      this.#model,
+      "model_required",
+      "Synthesis requires an explicitly configured model provider and model",
+    );
+    const request = await this.#store.loadSynthesisRequest(command.requestId);
+    invariant(
+      request,
+      "synthesis_request_missing",
+      `Synthesis request does not exist: ${command.requestId}`,
+    );
+    const stored = await this.#store.loadPaper(request.paperId);
+    this.#assertPreparedRequestTarget(request, {
+      stored,
+      draftId: request.draftId,
+      draftRevision: request.draftRevision,
+      revisionOf: request.supersedesDraftId
+        ? await this.#store.loadDraft(request.supersedesDraftId)
+        : undefined,
     });
+    const prepared = this.#validatePreparedRequestCompatibility(
+      request,
+      stored,
+    );
+    const dispatch = await this.#store.beginSynthesisRequest(
+      command.requestId,
+      command.executionToken,
+      this.#clock().toISOString(),
+    );
+    const requestPath = this.#store.relative(dispatch.path);
+    try {
+      const generated = await generatePreparedTechnicalSummary(this.#model, {
+        ...prepared,
+        request: {
+          ...prepared.request,
+          idempotencyKey: request.id,
+        },
+      });
+      const completedAt = this.#clock().toISOString();
+      const result: SynthesisResult = {
+        summary: generated.summary,
+        provider: this.#model.provider,
+        model: this.#model.model,
+        promptSha256: generated.promptSha256,
+        ...(generated.responseId ? { responseId: generated.responseId } : {}),
+        ...(generated.usage ? { usage: generated.usage } : {}),
+      };
+      const draft = synthesisDraft(request, result, completedAt);
+      const completed = await this.#store.completeSynthesisRequest(
+        request.id,
+        command.executionToken,
+        result,
+        completedAt,
+      );
+      const draftPath = await this.#store.saveDraft(draft);
+      const reviewPath = await this.#store.writeReview(
+        draft.id,
+        renderDraftReview(draft, stored.paper.title),
+      );
+      return {
+        command: "synthesize",
+        requestId: request.id,
+        outcome: "completed",
+        draftId: draft.id,
+        paperId: stored.paper.id,
+        slug: publicationSlug(stored.paper.title, stored.paper.id),
+        reviewPath: this.#store.relative(reviewPath),
+        changedPaths: [
+          requestPath,
+          this.#store.relative(completed.path),
+          this.#store.relative(draftPath),
+          this.#store.relative(reviewPath),
+        ]
+          .filter((value, index, values) => values.indexOf(value) === index)
+          .sort(),
+      };
+    } catch {
+      const current = await this.#store.loadSynthesisRequest(request.id);
+      if (current?.state === "dispatching") {
+        const ambiguous = await this.#store.markSynthesisAmbiguous(
+          request.id,
+          command.executionToken,
+          this.#clock().toISOString(),
+        );
+        return {
+          command: "synthesize",
+          requestId: request.id,
+          outcome: "ambiguous",
+          changedPaths: [this.#store.relative(ambiguous.path)],
+        };
+      }
+      throw new LiteratureError(
+        "synthesis_completion_failed",
+        `Synthesis ${request.id} could not be completed; inspect its durable state before retrying`,
+      );
+    }
+  }
+
+  async #reconcileSynthesis(
+    command: ReconcileSynthesisCommand,
+  ): Promise<Extract<RunReport, { command: "reconcile-synthesis" }>> {
+    const reconciled = await this.#store.reconcileSynthesisForRetry(
+      command.requestId,
+      command.expectedUpdatedAt,
+      this.#clock().toISOString(),
+      command.note,
+    );
+    return {
+      command: "reconcile-synthesis",
+      requestId: reconciled.request.id,
+      requestState: "prepared",
+      changedPaths: [this.#store.relative(reconciled.path)],
+    };
+  }
+
+  #assertPreparedRequestTarget(
+    request: SynthesisRequest,
+    target: {
+      stored: StoredPaper;
+      draftId: string;
+      draftRevision: number;
+      revisionOf: DraftSummary | undefined;
+    },
+  ): void {
+    invariant(
+      request.paperId === target.stored.paper.id &&
+        request.candidateId === target.stored.candidate.id &&
+        request.candidateRevision === target.stored.candidate.revision &&
+        request.draftId === target.draftId &&
+        request.draftRevision === target.draftRevision &&
+        request.supersedesDraftId === target.revisionOf?.id,
+      "synthesis_request_target_mismatch",
+      `Synthesis request does not match the selected paper revision: ${request.id}`,
+    );
+  }
+
+  #validatePreparedRequestCompatibility(
+    request: SynthesisRequest,
+    stored: StoredPaper,
+  ): ReturnType<typeof prepareTechnicalSummary> {
+    invariant(
+      this.#model,
+      "model_required",
+      "Synthesis requires an explicitly configured model provider and model",
+    );
+    invariant(
+      request.provider === this.#model.provider &&
+        request.model === this.#model.model,
+      "synthesis_model_mismatch",
+      "Configured model does not match the durably prepared synthesis request",
+    );
+    const prepared = prepareTechnicalSummary(stored.paper, request.evidence, {
+      ...(request.revisionFeedback
+        ? { revisionFeedback: request.revisionFeedback }
+        : {}),
+    });
+    invariant(
+      prepared.promptSha256 === request.prompt.sha256,
+      "synthesis_prompt_mismatch",
+      "Prepared model prompt no longer matches the durable synthesis request",
+    );
+    return prepared;
+  }
+
+  async #materializeCompletedSynthesis(
+    request: SynthesisRequest & { state: "completed" },
+    stored: StoredPaper,
+  ): Promise<Extract<RunReport, { command: "prepare-synthesis" }>> {
+    const draft = synthesisDraft(request, request.result, request.completedAt);
     const draftPath = await this.#store.saveDraft(draft);
     const reviewPath = await this.#store.writeReview(
       draft.id,
       renderDraftReview(draft, stored.paper.title),
     );
-    changedPaths.push(
-      this.#store.relative(draftPath),
-      this.#store.relative(reviewPath),
-    );
     return {
-      command: "synthesize",
+      command: "prepare-synthesis",
+      requestId: request.id,
+      requestState: "completed",
       draftId: draft.id,
       paperId: stored.paper.id,
       slug: publicationSlug(stored.paper.title, stored.paper.id),
       reviewPath: this.#store.relative(reviewPath),
-      changedPaths: [...new Set(changedPaths)].sort(),
+      changedPaths: [
+        this.#store.relative(draftPath),
+        this.#store.relative(reviewPath),
+      ],
     };
   }
 
@@ -818,43 +1108,169 @@ class DefaultLiteratureLifecycle implements LiteratureLifecycle {
       "publication_not_approved",
       `Draft has not passed publication review: ${draft.id}`,
     );
-    const slug = publicationSlug(stored.paper.title, stored.paper.id);
-    const existing = await this.#store.loadPublication(slug);
-    if (existing) {
-      const target = await this.#store.writePublicPaper(
-        existing.slug,
-        renderPublicMarkdown(existing, draft),
+    let publication = await this.#store.findPublicationByPaperId(
+      stored.paper.id,
+    );
+    if (publication) {
+      invariant(
+        publication.review.draftId === draft.id,
+        "publication_draft_mismatch",
+        `Publication already belongs to a different approved draft: ${publication.slug}`,
       );
+      let release = await this.#store.loadReleaseForPublication(
+        publication.slug,
+        publication,
+      );
+      if (release) {
+        const existingDelivery =
+          await this.#store.loadDeliveryForRelease(release);
+        const delivery =
+          existingDelivery ??
+          createPendingDelivery(release, this.#clock().toISOString());
+        const deliveryPath = existingDelivery
+          ? this.#store.deliveryPath(delivery)
+          : await this.#store.saveDelivery(delivery);
+        return {
+          command: "publish",
+          draftId: draft.id,
+          paperId: stored.paper.id,
+          slug: publication.slug,
+          privatePublicationPath: this.#store.relative(
+            this.#store.publicationPath(publication.slug),
+          ),
+          releasePath: this.#store.relative(this.#store.releasePath(release)),
+          deliveryPath: this.#store.relative(deliveryPath),
+          publicDigest: release.projection.sha256,
+          changedPaths: existingDelivery
+            ? []
+            : [this.#store.relative(deliveryPath)],
+        };
+      }
+      const expectedPublication = buildPublication(
+        stored.paper,
+        draft,
+        approval,
+        {
+          publishedAt: publication.publishedAt,
+          ...(await this.#store.loadDraftReviewContext(draft.id)),
+        },
+      );
+      invariant(
+        stableJson(publication) === stableJson(expectedPublication),
+        "publication_integrity_mismatch",
+        `Immutable publication does not match approved draft: ${publication.slug}`,
+      );
+      let createdRelease = false;
+      {
+        const projection = new PublicDeclassifier().declassify(
+          publication,
+          draft,
+        );
+        release = sealPublicProjection(projection, {
+          draftId: draft.id,
+          publicationPath: this.#store.relative(
+            this.#store.publicationPath(publication.slug),
+          ),
+          publicationSha256: sha256(stableJson(publication)),
+          createdAt: publication.publishedAt,
+        });
+        await this.#store.saveRelease(release, publication);
+        createdRelease = true;
+      }
+      const existingDelivery =
+        await this.#store.loadDeliveryForRelease(release);
+      const delivery =
+        existingDelivery ??
+        createPendingDelivery(release, this.#clock().toISOString());
+      const deliveryPath = existingDelivery
+        ? this.#store.deliveryPath(delivery)
+        : await this.#store.saveDelivery(delivery);
       return {
         command: "publish",
         draftId: draft.id,
         paperId: stored.paper.id,
-        slug,
-        publicPath: this.#store.relative(target),
-        changedPaths: [],
+        slug: publication.slug,
+        privatePublicationPath: this.#store.relative(
+          this.#store.publicationPath(publication.slug),
+        ),
+        releasePath: this.#store.relative(this.#store.releasePath(release)),
+        deliveryPath: this.#store.relative(deliveryPath),
+        publicDigest: release.projection.sha256,
+        changedPaths: [
+          ...(createdRelease
+            ? [this.#store.relative(this.#store.releasePath(release))]
+            : []),
+          ...(existingDelivery ? [] : [this.#store.relative(deliveryPath)]),
+        ].sort(),
       };
     }
-    const publication = buildPublication(stored.paper, draft, approval, {
+    publication = buildPublication(stored.paper, draft, approval, {
       publishedAt: this.#clock().toISOString(),
       ...(await this.#store.loadDraftReviewContext(draft.id)),
     });
     const recordPath = await this.#store.savePublication(publication);
-    const target = await this.#store.writePublicPaper(
-      publication.slug,
-      renderPublicMarkdown(publication, draft),
+    const projection = new PublicDeclassifier().declassify(publication, draft);
+    const release = sealPublicProjection(projection, {
+      draftId: draft.id,
+      publicationPath: this.#store.relative(recordPath),
+      publicationSha256: sha256(stableJson(publication)),
+      createdAt: publication.publishedAt,
+    });
+    const releasePath = await this.#store.saveRelease(release, publication);
+    const deliveryPath = await this.#store.saveDelivery(
+      createPendingDelivery(release, publication.publishedAt),
     );
     return {
       command: "publish",
       draftId: draft.id,
       paperId: stored.paper.id,
       slug: publication.slug,
-      publicPath: this.#store.relative(target),
+      privatePublicationPath: this.#store.relative(recordPath),
+      releasePath: this.#store.relative(releasePath),
+      deliveryPath: this.#store.relative(deliveryPath),
+      publicDigest: projection.sha256,
       changedPaths: [
         this.#store.relative(recordPath),
-        this.#store.relative(target),
+        this.#store.relative(releasePath),
+        this.#store.relative(deliveryPath),
       ].sort(),
     };
   }
+}
+
+function synthesisDraft(
+  request: SynthesisRequest,
+  result: SynthesisResult,
+  generatedAt: string,
+): DraftSummary {
+  const draftCore = {
+    schemaVersion: "1.0" as const,
+    id: request.draftId,
+    revision: request.draftRevision,
+    ...(request.supersedesDraftId
+      ? { supersedesDraftId: request.supersedesDraftId }
+      : {}),
+    candidateId: request.candidateId,
+    candidateRevision: request.candidateRevision,
+    paperId: request.paperId,
+    summary: result.summary,
+    evidence: request.evidence,
+    generation: {
+      provider:
+        result.provider === "fake" ? ("openai" as const) : result.provider,
+      model: result.model,
+      generatedAt,
+      prompt: request.prompt,
+      outputSchemaVersion: request.outputSchemaVersion,
+      inputSha256: request.evidence.inputSha256,
+      ...(result.responseId ? { requestId: result.responseId } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
+    },
+  };
+  return DraftSummarySchema.parse({
+    ...draftCore,
+    recordSha256: sha256(stableJson(draftCore)),
+  });
 }
 
 function checkpointFor(

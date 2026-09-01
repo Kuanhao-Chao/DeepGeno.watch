@@ -44,15 +44,21 @@ const request = {
   prompt: "Evidence packet",
   schemaName: "technical_summary",
   outputSchema: TechnicalSummarySchema,
+  idempotencyKey: "synthesis-request-fixture",
 };
 
 describe("structured model adapters", () => {
   it("uses OpenAI Responses strict Zod parsing with no tools or storage", async () => {
     let captured: Record<string, unknown> | undefined;
+    let requestOptions: Record<string, unknown> | undefined;
     const client = {
       responses: {
-        parse: async (params: Record<string, unknown>) => {
+        parse: async (
+          params: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => {
           captured = params;
+          requestOptions = options;
           return {
             id: "resp_fixture",
             output_parsed: summary,
@@ -79,6 +85,9 @@ describe("structured model adapters", () => {
       max_output_tokens: 5000,
     });
     expect(captured).not.toHaveProperty("tools");
+    expect(requestOptions).toEqual({
+      idempotencyKey: "synthesis-request-fixture",
+    });
     const format = (
       captured?.text as {
         format: { strict: boolean; schema: Record<string, unknown> };

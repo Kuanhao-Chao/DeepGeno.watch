@@ -1,5 +1,25 @@
-import { readFile } from "node:fs/promises";
-import { isAbsolute, posix } from "node:path";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  lstat,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { spawnSync } from "node:child_process";
 
 export const CANDIDATE_LABEL = "literature-inbox";
 export const SUMMARY_LABEL = "summary-review";
@@ -25,6 +45,319 @@ export function assertPrivateRepository(event) {
   }
 }
 
+export function assertMergedByCurator(event, configuredLogin) {
+  const expected = normalizedLogin(configuredLogin);
+  if (!expected) {
+    throw new Error(
+      "DEEPGENO_CURATOR_GITHUB_LOGIN must name the curator allowed to merge literature reviews",
+    );
+  }
+  const actualValue = event?.pull_request?.merged_by?.login;
+  const actual = normalizedLogin(actualValue);
+  if (!actual || actual !== expected) {
+    throw new Error(
+      "Merged literature review was not attributed to the configured curator",
+    );
+  }
+  return actualValue.trim();
+}
+
+export function resolveAutomationRoots(
+  environment = process.env,
+  cwd = process.cwd(),
+) {
+  const projectValue = optionalRoot(environment.DEEPGENO_PROJECT_ROOT);
+  const stateValue = optionalRoot(environment.DEEPGENO_STATE_ROOT);
+  if (environment.GITHUB_ACTIONS === "true") {
+    if (!projectValue)
+      throw new Error("DEEPGENO_PROJECT_ROOT is required in GitHub Actions");
+    if (!stateValue)
+      throw new Error("DEEPGENO_STATE_ROOT is required in GitHub Actions");
+  }
+  const projectRoot = resolve(cwd, projectValue ?? cwd);
+  const stateRoot = resolve(cwd, stateValue ?? cwd);
+  if (environment.GITHUB_ACTIONS === "true" && projectRoot === stateRoot) {
+    throw new Error(
+      "DEEPGENO_PROJECT_ROOT and DEEPGENO_STATE_ROOT must be distinct in GitHub Actions",
+    );
+  }
+  return { projectRoot, stateRoot };
+}
+
+export function buildLiteratureInvocation(
+  command,
+  args,
+  roots,
+  stateRoot = roots.stateRoot,
+) {
+  return {
+    command: "npm",
+    args: [
+      "run",
+      "--silent",
+      "literature",
+      "--",
+      command,
+      "--project-root",
+      roots.projectRoot,
+      "--state-root",
+      resolve(stateRoot),
+      ...args,
+    ],
+    cwd: roots.projectRoot,
+  };
+}
+
+export function automationWorkingDirectory(kind, roots) {
+  if (new Set(["npm", "literature", "build", "privacy"]).has(kind))
+    return roots.projectRoot;
+  if (new Set(["git", "gh", "review"]).has(kind)) return roots.stateRoot;
+  throw new Error(`Unknown automation tool kind: ${String(kind)}`);
+}
+
+export async function assertPrivateStateCheckout({
+  roots,
+  event,
+  run = runGit,
+}) {
+  const expectedRepository = event?.repository?.full_name;
+  if (
+    typeof expectedRepository !== "string" ||
+    !/^[^/]+\/[^/]+$/.test(expectedRepository)
+  ) {
+    throw new Error("Private GitHub event must identify repository.full_name");
+  }
+  const projectRoot = await canonicalDirectory(
+    roots.projectRoot,
+    "project root",
+  );
+  const stateRoot = await canonicalDirectory(roots.stateRoot, "state root");
+  if (
+    projectRoot === stateRoot ||
+    projectRoot.startsWith(`${stateRoot}${sep}`) ||
+    stateRoot.startsWith(`${projectRoot}${sep}`)
+  ) {
+    throw new Error(
+      "Project and private state roots must be distinct non-nested directories",
+    );
+  }
+  const topLevel = await run("git", [
+    "-C",
+    stateRoot,
+    "rev-parse",
+    "--show-toplevel",
+  ]);
+  const checkoutRoot = await canonicalDirectory(
+    topLevel.trim(),
+    "private checkout root",
+  );
+  if (checkoutRoot !== stateRoot) {
+    throw new Error(
+      "DEEPGENO_STATE_ROOT must be the private Git checkout root",
+    );
+  }
+  await assertPrivateStateRemote({
+    stateRoot,
+    repository: expectedRepository,
+    run,
+  });
+  return { projectRoot, stateRoot, repository: expectedRepository };
+}
+
+export async function assertPrivateStateRemote({
+  stateRoot,
+  repository,
+  run = runGit,
+}) {
+  if (
+    typeof repository !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+      repository,
+    )
+  ) {
+    throw new Error("Private Git checkout repository is invalid");
+  }
+  let fetchUrls;
+  let pushUrls;
+  let configuredPushUrls;
+  try {
+    [fetchUrls, pushUrls] = await Promise.all([
+      run("git", ["-C", stateRoot, "remote", "get-url", "--all", "origin"]),
+      run("git", [
+        "-C",
+        stateRoot,
+        "remote",
+        "get-url",
+        "--push",
+        "--all",
+        "origin",
+      ]),
+    ]);
+    try {
+      configuredPushUrls = await run("git", [
+        "-C",
+        stateRoot,
+        "config",
+        "--get-all",
+        "remote.origin.pushurl",
+      ]);
+    } catch {
+      configuredPushUrls = "";
+    }
+  } catch {
+    throw new Error(
+      "Private Git checkout must define one effective origin URL for fetch and push",
+    );
+  }
+  const urls = [fetchUrls, pushUrls].map((value) =>
+    value
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean),
+  );
+  if (
+    urls.some((value) => value.length !== 1) ||
+    configuredPushUrls.trim().length > 0 ||
+    urls.flat().some((url) => canonicalGitHubOrigin(url) !== repository)
+  ) {
+    throw new Error(
+      "Private Git checkout effective origin does not match the GitHub event repository",
+    );
+  }
+}
+
+export function privateGhArguments(repository, args) {
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+      repository,
+    )
+  ) {
+    throw new Error("Private GitHub repository is invalid");
+  }
+  if (
+    !Array.isArray(args) ||
+    args.some((argument) => typeof argument !== "string")
+  ) {
+    throw new Error("GitHub CLI arguments are invalid");
+  }
+  return [...args, "--repo", repository];
+}
+
+/**
+ * Runs discovery against a disposable private-state copy. A clean non-shadow
+ * result is promoted atomically by allowlisted path before Gate 1 side effects;
+ * shadow results and partial-source results never touch the real state root.
+ */
+export async function executeStagedDiscovery({
+  stateRoot,
+  runnerTemp,
+  shadow,
+  discover,
+  accept,
+}) {
+  const actualRoot = resolve(stateRoot);
+  const temporaryParent = resolve(runnerTemp);
+  await mkdir(temporaryParent, { recursive: true });
+  const stagedStateRoot = await mkdtemp(
+    join(temporaryParent, "discovery-state-"),
+  );
+  try {
+    await copyPrivateState(actualRoot, stagedStateRoot);
+    const reports = await discover(stagedStateRoot);
+    if (!Array.isArray(reports))
+      throw new Error("Staged discovery must return an array of reports");
+    const sourceIssueCount = reports.reduce((count, report) => {
+      if (!Array.isArray(report?.sourceIssues))
+        throw new Error("sourceIssues must be an array");
+      return count + report.sourceIssues.length;
+    }, 0);
+    if (shadow) return reports;
+    if (sourceIssueCount > 0) {
+      throw new Error(
+        `Non-shadow discovery stopped because ${sourceIssueCount} source issue(s) were reported`,
+      );
+    }
+    const changedPaths = validateChangedPaths(
+      reports.flatMap((report) => report.changedPaths),
+      [PRIVATE_PREFIX],
+    );
+    await promotePrivatePaths(stagedStateRoot, actualRoot, changedPaths);
+    await accept(reports);
+    return reports;
+  } finally {
+    await removeStagedRoot(temporaryParent, stagedStateRoot);
+  }
+}
+
+export async function executeApprovedPublication({
+  publish,
+  commitPending,
+  verifyProject,
+  deliver,
+  commitReceipt,
+}) {
+  const publication = await publish();
+  await commitPending(publication);
+  await verifyProject();
+  const delivery = await deliver(publication.slug);
+  await commitReceipt(delivery);
+  return { publication, delivery };
+}
+
+/**
+ * Persists every paid-call transition to the private remote before advancing.
+ * The raw execution token exists only between arming and dispatch; Git stores
+ * its digest, so a lost runner fails closed until an operator reconciles it.
+ */
+export async function executeDurableSynthesis({
+  prepare,
+  commitPrepared,
+  arm,
+  commitArmed,
+  dispatch,
+  commitOutcome,
+}) {
+  const prepared = requireSynthesisReport(await prepare(), "prepare-synthesis");
+  if (
+    prepared.requestState !== "prepared" &&
+    prepared.requestState !== "completed"
+  ) {
+    throw new Error("Preparation returned an invalid synthesis request state");
+  }
+  await commitPrepared(prepared);
+  if (prepared.requestState === "completed") return prepared;
+
+  const armed = requireSynthesisReport(
+    await arm(prepared.requestId),
+    "arm-synthesis",
+  );
+  if (
+    armed.requestId !== prepared.requestId ||
+    armed.requestState !== "armed" ||
+    typeof armed.executionToken !== "string" ||
+    armed.executionToken.length === 0
+  ) {
+    throw new Error("Arming returned an invalid synthesis request");
+  }
+  await commitArmed(armed);
+
+  const outcome = requireSynthesisReport(
+    await dispatch({
+      requestId: armed.requestId,
+      executionToken: armed.executionToken,
+    }),
+    "synthesize",
+  );
+  if (
+    outcome.requestId !== prepared.requestId ||
+    (outcome.outcome !== "completed" && outcome.outcome !== "ambiguous")
+  ) {
+    throw new Error("Dispatch returned an invalid synthesis outcome");
+  }
+  await commitOutcome(outcome);
+  return outcome;
+}
+
 export function relevantPullRequestKind(event) {
   const labels = new Set(
     (event?.pull_request?.labels ?? []).map((label) =>
@@ -41,6 +374,20 @@ export function relevantPullRequestKind(event) {
   if (candidate) return "candidate";
   if (summary) return "summary";
   return undefined;
+}
+
+function requireSynthesisReport(report, command) {
+  if (
+    !report ||
+    typeof report !== "object" ||
+    Array.isArray(report) ||
+    report.command !== command ||
+    typeof report.requestId !== "string" ||
+    report.requestId.length === 0
+  ) {
+    throw new Error(`Expected a valid ${command} report`);
+  }
+  return report;
 }
 
 export function pullRequestMetadata(event) {
@@ -97,6 +444,39 @@ export function parseJsonLine(output, expectedCommand) {
   return value;
 }
 
+export function formatCommandFailure(command, args, result) {
+  const sensitiveValues = [];
+  const safeArguments = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = String(args[index]);
+    if (argument === "--execution-token" && index + 1 < args.length) {
+      const value = String(args[index + 1]);
+      if (value) sensitiveValues.push(value);
+      safeArguments.push(argument, "[REDACTED]");
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--execution-token=")) {
+      const value = argument.slice("--execution-token=".length);
+      if (value) sensitiveValues.push(value);
+      safeArguments.push("--execution-token=[REDACTED]");
+      continue;
+    }
+    safeArguments.push(argument);
+  }
+  const redact = (value) =>
+    sensitiveValues.reduce(
+      (redacted, secret) => redacted.split(secret).join("[REDACTED]"),
+      value,
+    );
+  const detail = [result.stderr, result.stdout]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join("\n")
+    .trim();
+  const display = [command, ...safeArguments].join(" ");
+  return `${display} failed with exit ${String(result.status)}${detail ? `\n${redact(detail)}` : ""}`;
+}
+
 export function validateChangedPaths(paths, allowedPrefixes) {
   if (!Array.isArray(paths)) throw new Error("changedPaths must be an array");
   return [...new Set(paths.map(validateRelativePath))].map((path) => {
@@ -145,6 +525,48 @@ export function validateModelEnvironment(environment) {
     20_000,
   );
   return { provider, model, selectedKey, maxOutputTokens };
+}
+
+export async function probeModelAccess(
+  environment,
+  { fetch: fetchImpl = globalThis.fetch } = {},
+) {
+  const configuration = validateModelEnvironment(environment);
+  if (configuration.provider !== "openai") {
+    throw new Error("Model access probing currently supports only openai");
+  }
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Model access probing requires fetch");
+  }
+  const apiKey = environment[configuration.selectedKey].trim();
+  const response = await fetchImpl(
+    `https://api.openai.com/v1/models/${encodeURIComponent(configuration.model)}`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${apiKey}`,
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI model access probe failed with HTTP ${String(response.status)}`,
+    );
+  }
+  const model = await response.json();
+  if (
+    !model ||
+    Array.isArray(model) ||
+    typeof model !== "object" ||
+    model.object !== "model" ||
+    model.id !== configuration.model
+  ) {
+    throw new Error("OpenAI model access probe returned an unexpected model");
+  }
+  return { provider: configuration.provider, model: configuration.model };
 }
 
 export function validateSelectedPaperLimit(paperIds, configuredLimit = "20") {
@@ -268,4 +690,99 @@ function boundedInteger(value, label, minimum, maximum) {
     );
   }
   return parsed;
+}
+
+function normalizedLogin(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function optionalRoot(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function canonicalDirectory(value, label) {
+  const absolute = resolve(value);
+  let stat;
+  try {
+    stat = await lstat(absolute);
+  } catch {
+    throw new Error(`${label} must exist and must not be a symlink`);
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`${label} must be a real directory, not a symlink`);
+  }
+  return realpath(absolute);
+}
+
+function canonicalGitHubOrigin(value) {
+  const https = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(
+    value,
+  );
+  const ssh =
+    /^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(
+      value,
+    );
+  const repository = https?.[1] ?? ssh?.[1];
+  if (
+    !repository ||
+    !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository)
+  ) {
+    throw new Error(
+      "Private Git checkout origin must be a canonical github.com owner/repository URL",
+    );
+  }
+  return repository;
+}
+
+async function runGit(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
+  }
+  return result.stdout;
+}
+
+async function copyPrivateState(sourceRoot, targetRoot) {
+  const source = join(sourceRoot, "data", "private");
+  const target = join(targetRoot, "data", "private");
+  try {
+    await cp(source, target, { recursive: true, preserveTimestamps: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+async function promotePrivatePaths(stagedRoot, actualRoot, changedPaths) {
+  for (const changedPath of changedPaths) {
+    const source = confinedPath(stagedRoot, changedPath);
+    const target = confinedPath(actualRoot, changedPath);
+    const bytes = await readFile(source);
+    await mkdir(dirname(target), { recursive: true });
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, bytes, { mode: 0o600 });
+    await rename(temporary, target);
+  }
+}
+
+function confinedPath(root, changedPath) {
+  const normalized = validateRelativePath(changedPath);
+  if (!normalized.startsWith(PRIVATE_PREFIX)) {
+    throw new Error(`Staged discovery path must remain private: ${normalized}`);
+  }
+  const resolvedRoot = resolve(root);
+  const target = resolve(resolvedRoot, normalized);
+  if (!target.startsWith(`${resolvedRoot}${sep}`)) {
+    throw new Error(`Staged discovery path escapes its root: ${normalized}`);
+  }
+  return target;
+}
+
+async function removeStagedRoot(parent, stagedRoot) {
+  const nested = relative(parent, stagedRoot);
+  if (!nested || nested === ".." || nested.startsWith(`..${sep}`)) {
+    throw new Error("Refusing to remove a staged root outside runner temp");
+  }
+  await rm(stagedRoot, { recursive: true, force: true });
 }

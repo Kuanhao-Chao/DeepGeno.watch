@@ -9,3 +9,24 @@ export const privateMarkerPattern = new RegExp(
   ].join("|"),
   "i",
 );
+
+// These fields are meaningful only inside the private review and synthesis
+// workflow. Public v2 frontmatter may expose anonymous approval time, but not
+// the identities, workflow records, or integrity inputs behind it.
+export const publicProvenanceLeakPattern = new RegExp(
+  [
+    "paperId",
+    "draftId",
+    "draftRevision",
+    "approvedBy",
+    "pullRequestUrl",
+    "commitSha",
+    "inputSha256",
+    "contentSha256",
+    "textSha256",
+    "recordSha256",
+    "requestId",
+    "inputTokens",
+    "outputTokens",
+  ].join("|"),
+);

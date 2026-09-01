@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { PublicEvidenceCitationSchema } from "./evidence.js";
+import { PublishedEvidenceReferenceSchema } from "./evidence.js";
 import { PaperSchema } from "./paper.js";
 import {
   ActorSchema,
@@ -52,12 +52,66 @@ export const PublishedPaperSchema = z
     evidence: z
       .object({
         scope: EvidenceScopeSchema,
-        citations: z.array(PublicEvidenceCitationSchema).min(1),
+        references: z.array(PublishedEvidenceReferenceSchema).min(1),
       })
       .strict(),
   })
   .strict();
 export type PublishedPaper = z.infer<typeof PublishedPaperSchema>;
+
+export const PublicEvidenceIdSchema = z.string().regex(/^e[1-9][0-9]*$/);
+const PublicEvidenceIdsSchema = z.array(PublicEvidenceIdSchema).min(1);
+
+const PublicEvidenceReferenceSchema = z
+  .object({
+    id: PublicEvidenceIdSchema,
+    documentKind: z.enum(["abstract", "jats", "html", "pdf", "supplement"]),
+    sourceUrl: UrlSchema,
+    locator: z
+      .object({
+        section: NonEmptyStringSchema.optional(),
+        paragraph: z.number().int().positive().optional(),
+        page: z.number().int().positive().optional(),
+        figure: NonEmptyStringSchema.optional(),
+        table: NonEmptyStringSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const PublicEvidenceBackedStatementSchema =
+  EvidenceBackedStatementSchema.extend({
+    evidenceIds: PublicEvidenceIdsSchema,
+  });
+const PublicDatasetUseSchema = DatasetUseSchema.extend({
+  evidenceIds: PublicEvidenceIdsSchema,
+});
+const PublicQuantitativeResultSchema = QuantitativeResultSchema.extend({
+  evidenceIds: PublicEvidenceIdsSchema,
+});
+const PublicArchitectureSchema =
+  TechnicalSummarySchema.shape.architecture.extend({
+    evidenceIds: PublicEvidenceIdsSchema,
+  });
+
+const PublicGenerationProvenanceSchema = z
+  .object({
+    provider: GenerationProvenanceSchema.shape.provider,
+    model: GenerationProvenanceSchema.shape.model,
+    generatedAt: GenerationProvenanceSchema.shape.generatedAt,
+    prompt: z
+      .object({
+        id: NonEmptyStringSchema,
+        version: NonEmptyStringSchema,
+      })
+      .strict(),
+    outputSchemaVersion: ContractVersionSchema,
+  })
+  .strict();
+
+const PublicReviewProvenanceSchema = z
+  .object({ approvedAt: IsoDateTimeSchema })
+  .strict();
 
 /**
  * The complete, public Astro frontmatter contract. Summary claims retain evidence
@@ -65,12 +119,8 @@ export type PublishedPaper = z.infer<typeof PublishedPaperSchema>;
  */
 export const PublicPaperSchema = z
   .object({
-    schemaVersion: ContractVersionSchema,
-    slug: z
-      .string()
-      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-      .optional(),
-    paperId: NonEmptyStringSchema,
+    schemaVersion: z.literal("2.0"),
+    slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     title: NonEmptyStringSchema,
     authors: z.array(NonEmptyStringSchema).min(1),
     publicationDate: IsoDateSchema.optional(),
@@ -83,6 +133,7 @@ export const PublicPaperSchema = z
     pdfUrl: UrlSchema.optional(),
     codeUrl: UrlSchema.optional(),
     dataUrl: UrlSchema.optional(),
+    projectUrl: UrlSchema.optional(),
     hook: NonEmptyStringSchema,
     priority: PrioritySchema,
     progress: ProgressSchema,
@@ -94,25 +145,84 @@ export const PublicPaperSchema = z
       .object({
         scope: EvidenceScopeSchema,
         fullTextAvailable: z.boolean(),
-        sources: z.array(PublicEvidenceCitationSchema).min(1),
+        references: z.array(PublicEvidenceReferenceSchema).min(1),
       })
       .strict(),
-    coreProblem: EvidenceBackedStatementSchema,
-    novelty: z.array(EvidenceBackedStatementSchema).min(1),
-    architecture: TechnicalSummarySchema.shape.architecture,
-    datasets: z.array(DatasetUseSchema),
-    benchmarks: z.array(DatasetUseSchema),
-    results: z.array(QuantitativeResultSchema),
-    takeaways: z.array(EvidenceBackedStatementSchema).min(1),
-    limitations: z.array(EvidenceBackedStatementSchema),
+    coreProblem: PublicEvidenceBackedStatementSchema,
+    novelty: z.array(PublicEvidenceBackedStatementSchema).min(1),
+    architecture: PublicArchitectureSchema,
+    datasets: z.array(PublicDatasetUseSchema),
+    benchmarks: z.array(PublicDatasetUseSchema),
+    results: z.array(PublicQuantitativeResultSchema),
+    takeaways: z.array(PublicEvidenceBackedStatementSchema).min(1),
+    limitations: z.array(PublicEvidenceBackedStatementSchema),
     provenance: z
       .object({
-        generation: GenerationProvenanceSchema,
-        review: PublicationReviewSchema,
+        generation: PublicGenerationProvenanceSchema,
+        review: PublicReviewProvenanceSchema,
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((paper, context) => {
+    const referenceIds = new Set<string>();
+    paper.evidence.references.forEach((reference, index) => {
+      if (referenceIds.has(reference.id)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate public evidence reference: ${reference.id}`,
+          path: ["evidence", "references", index, "id"],
+        });
+      }
+      referenceIds.add(reference.id);
+    });
+
+    const references: Array<{ ids: string[]; path: (string | number)[] }> = [
+      {
+        ids: paper.coreProblem.evidenceIds,
+        path: ["coreProblem", "evidenceIds"],
+      },
+      ...paper.novelty.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["novelty", index, "evidenceIds"],
+      })),
+      {
+        ids: paper.architecture.evidenceIds,
+        path: ["architecture", "evidenceIds"],
+      },
+      ...paper.datasets.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["datasets", index, "evidenceIds"],
+      })),
+      ...paper.benchmarks.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["benchmarks", index, "evidenceIds"],
+      })),
+      ...paper.results.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["results", index, "evidenceIds"],
+      })),
+      ...paper.takeaways.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["takeaways", index, "evidenceIds"],
+      })),
+      ...paper.limitations.map((entry, index) => ({
+        ids: entry.evidenceIds,
+        path: ["limitations", index, "evidenceIds"],
+      })),
+    ];
+    references.forEach(({ ids, path }) => {
+      ids.forEach((id, index) => {
+        if (!referenceIds.has(id)) {
+          context.addIssue({
+            code: "custom",
+            message: `Public summary names an unknown Evidence Reference: ${id}`,
+            path: [...path, index],
+          });
+        }
+      });
+    });
+  });
 export type PublicPaper = z.infer<typeof PublicPaperSchema>;
 
 export const PublicPaperFrontmatterSchema = PublicPaperSchema;

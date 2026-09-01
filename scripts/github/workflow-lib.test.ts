@@ -1,17 +1,72 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { OpenAiStructuredModel } from "../../packages/literature/src/models/openai.js";
 
 import {
   assertPrivateRepository,
+  assertMergedByCurator,
+  assertPrivateStateCheckout,
+  automationWorkingDirectory,
+  buildLiteratureInvocation,
+  executeApprovedPublication,
+  executeDurableSynthesis,
+  executeStagedDiscovery,
   extractReviewId,
+  formatCommandFailure,
   parseJsonLine,
+  privateGhArguments,
+  probeModelAccess,
   relevantPullRequestKind,
+  resolveAutomationRoots,
   resolveDiscoveryWindows,
   validateChangedPaths,
   validateModelEnvironment,
   validateSelectedPaperLimit,
 } from "./workflow-lib.mjs";
 
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
 describe("GitHub literature workflow boundaries", () => {
+  it("imports automation without running a command and exposes its entrypoint for testing", async () => {
+    const environment = {
+      GITHUB_ACTIONS: "true",
+      DEEPGENO_PROJECT_ROOT: path.resolve("."),
+      DEEPGENO_STATE_ROOT: path.resolve("../private-state-import-fixture"),
+    };
+    const priorEnvironment = Object.fromEntries(
+      Object.keys(environment).map((name) => [name, process.env[name]]),
+    );
+
+    try {
+      Object.assign(process.env, environment);
+      const automation = await import("./automation.mjs?entrypoint-test");
+      expect(typeof automation.main).toBe("function");
+    } finally {
+      for (const [name, value] of Object.entries(priorEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it("rejects review automation in a public repository", () => {
     expect(() =>
       assertPrivateRepository({ repository: { private: false } }),
@@ -105,6 +160,177 @@ describe("GitHub literature workflow boundaries", () => {
     ).toThrow(/OPENAI_API_KEY/);
   });
 
+  it("probes OpenAI model access with one non-generative model retrieval", async () => {
+    let request:
+      { input: string | URL | Request; init?: RequestInit } | undefined;
+
+    const result = await probeModelAccess(
+      {
+        DEEPGENO_MODEL_PROVIDER: "openai",
+        DEEPGENO_MODEL_NAME: "gpt-5.6-terra",
+        OPENAI_API_KEY: "test-openai-key",
+      },
+      {
+        fetch: async (input, init) => {
+          request = { input, init };
+          return new Response(
+            JSON.stringify({
+              id: "gpt-5.6-terra",
+              object: "model",
+              created: 1_787_875_200,
+              owned_by: "openai",
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        },
+      },
+    );
+
+    expect(result).toEqual({ provider: "openai", model: "gpt-5.6-terra" });
+    expect(String(request?.input)).toBe(
+      "https://api.openai.com/v1/models/gpt-5.6-terra",
+    );
+    expect(request?.init).toMatchObject({
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: "Bearer test-openai-key",
+      },
+      redirect: "error",
+    });
+    expect(request?.init?.signal).toBeInstanceOf(AbortSignal);
+    expect(request?.init?.signal?.aborted).toBe(false);
+    expect(request?.init?.body).toBeUndefined();
+  });
+
+  it("fails a model probe without echoing provider response bodies", async () => {
+    const environment = {
+      DEEPGENO_MODEL_PROVIDER: "openai",
+      DEEPGENO_MODEL_NAME: "explicit-model",
+      OPENAI_API_KEY: "test-openai-key",
+    };
+    await expect(
+      probeModelAccess(environment, {
+        fetch: async () =>
+          new Response("private provider diagnostic", { status: 403 }),
+      }),
+    ).rejects.toThrow("OpenAI model access probe failed with HTTP 403");
+    await expect(
+      probeModelAccess(environment, {
+        fetch: async () =>
+          Response.json({ id: "different-model", object: "model" }),
+      }),
+    ).rejects.toThrow(/unexpected model/);
+    await expect(
+      probeModelAccess({
+        DEEPGENO_MODEL_PROVIDER: "anthropic",
+        DEEPGENO_MODEL_NAME: "explicit-model",
+        ANTHROPIC_API_KEY: "test-anthropic-key",
+      }),
+    ).rejects.toThrow(/supports only openai/);
+  });
+
+  it("runs the private probe command without model generation or state mutation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-probe-test-"));
+    roots.push(root);
+    const projectRoot = path.resolve(".");
+    const stateRoot = path.join(root, "state");
+    const runnerRoot = path.join(root, "runner");
+    const eventPath = path.join(root, "event.json");
+    const markerPath = path.join(stateRoot, "data/private/marker.txt");
+    await mkdir(path.dirname(markerPath), { recursive: true });
+    await mkdir(runnerRoot);
+    await writeFile(markerPath, "unchanged\n", "utf8");
+    await writeFile(
+      eventPath,
+      JSON.stringify({
+        repository: {
+          private: true,
+          full_name: "example/private-state",
+        },
+      }),
+      "utf8",
+    );
+    git(stateRoot, ["init"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    const statusBefore = gitOutput(stateRoot, [
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+    const priorArgv = [...process.argv];
+    const environment = {
+      GITHUB_ACTIONS: "true",
+      GITHUB_EVENT_PATH: eventPath,
+      RUNNER_TEMP: runnerRoot,
+      DEEPGENO_PROJECT_ROOT: projectRoot,
+      DEEPGENO_STATE_ROOT: stateRoot,
+      DEEPGENO_MODEL_PROVIDER: "openai",
+      DEEPGENO_MODEL_NAME: "gpt-5.6-terra",
+      OPENAI_API_KEY: "test-openai-key",
+    };
+    const priorEnvironment = Object.fromEntries(
+      Object.keys(environment).map((name) => [name, process.env[name]]),
+    );
+    const requests: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        requests.push({ input: String(input), init });
+        return new Response(
+          JSON.stringify({
+            id: "gpt-5.6-terra",
+            object: "model",
+            created: 1_787_875_200,
+            owned_by: "openai",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      });
+    const generateSpy = vi.spyOn(OpenAiStructuredModel.prototype, "generate");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      Object.assign(process.env, environment);
+      process.argv = [priorArgv[0]!, priorArgv[1]!, "probe-model"];
+      const automation = await import("./automation.mjs?probe-model-test");
+
+      await automation.main();
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({
+        input: "https://api.openai.com/v1/models/gpt-5.6-terra",
+        init: { method: "GET" },
+      });
+      expect(generateSpy).not.toHaveBeenCalled();
+      expect(await readFile(markerPath, "utf8")).toBe("unchanged\n");
+      expect(
+        gitOutput(stateRoot, [
+          "status",
+          "--porcelain=v1",
+          "--untracked-files=all",
+        ]),
+      ).toBe(statusBefore);
+    } finally {
+      process.argv = priorArgv;
+      for (const [name, value] of Object.entries(priorEnvironment)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      fetchSpy.mockRestore();
+      generateSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+
   it("bounds summary fan-out before any model jobs start", () => {
     expect(validateSelectedPaperLimit(["paper-1", "paper-2"], "2")).toBe(2);
     expect(() =>
@@ -113,6 +339,155 @@ describe("GitHub literature workflow boundaries", () => {
     expect(() => validateSelectedPaperLimit(["paper-1"], "0")).toThrow(
       /integer from 1/,
     );
+  });
+
+  it("persists prepared and armed synthesis states before model dispatch", async () => {
+    const events: string[] = [];
+    let remoteState = "selected";
+    const result = await executeDurableSynthesis({
+      prepare: async () => {
+        events.push("prepare");
+        return {
+          command: "prepare-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "prepared",
+          changedPaths: ["data/private/synthesis-requests/request-1.json"],
+        };
+      },
+      commitPrepared: async () => {
+        remoteState = "prepared";
+        events.push("push-prepared");
+      },
+      arm: async (requestId: string) => {
+        expect(requestId).toBe("synthesis-request-1");
+        expect(remoteState).toBe("prepared");
+        events.push("arm");
+        return {
+          command: "arm-synthesis",
+          requestId,
+          requestState: "armed",
+          executionToken: "one-use-secret",
+          changedPaths: ["data/private/synthesis-requests/request-1.json"],
+        };
+      },
+      commitArmed: async () => {
+        remoteState = "armed";
+        events.push("push-armed");
+      },
+      dispatch: async ({ requestId, executionToken }) => {
+        expect(requestId).toBe("synthesis-request-1");
+        expect(executionToken).toBe("one-use-secret");
+        expect(remoteState).toBe("armed");
+        events.push("model-dispatch");
+        return {
+          command: "synthesize",
+          requestId,
+          outcome: "completed",
+          changedPaths: ["data/private/drafts/draft-1.json"],
+        };
+      },
+      commitOutcome: async () => {
+        remoteState = "completed";
+        events.push("push-completed");
+      },
+    });
+
+    expect(result).toMatchObject({ outcome: "completed" });
+    expect(events).toEqual([
+      "prepare",
+      "push-prepared",
+      "arm",
+      "push-armed",
+      "model-dispatch",
+      "push-completed",
+    ]);
+  });
+
+  it("does not dispatch a model call when durable arming cannot be pushed", async () => {
+    let modelCalls = 0;
+    await expect(
+      executeDurableSynthesis({
+        prepare: async () => ({
+          command: "prepare-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "prepared",
+        }),
+        commitPrepared: async () => {},
+        arm: async () => ({
+          command: "arm-synthesis",
+          requestId: "synthesis-request-1",
+          requestState: "armed",
+          executionToken: "one-use-secret",
+        }),
+        commitArmed: async () => {
+          throw new Error("push failed");
+        },
+        dispatch: async () => {
+          modelCalls += 1;
+          throw new Error("must not run");
+        },
+        commitOutcome: async () => {},
+      }),
+    ).rejects.toThrow(/push failed/);
+    expect(modelCalls).toBe(0);
+  });
+
+  it("redacts one-use synthesis tokens from subprocess failures", () => {
+    const executionToken = "raw-one-use-execution-token";
+    const message = formatCommandFailure(
+      "npm",
+      [
+        "run",
+        "literature",
+        "--",
+        "synthesize",
+        "--request",
+        "synthesis-request-1",
+        "--execution-token",
+        executionToken,
+      ],
+      {
+        status: 1,
+        stderr: `provider diagnostic accidentally repeated ${executionToken}`,
+        stdout: `partial output ${executionToken}`,
+      },
+    );
+
+    expect(message).not.toContain(executionToken);
+    expect(message).toContain("--execution-token [REDACTED]");
+    expect(message.match(/\[REDACTED\]/g)).toHaveLength(3);
+  });
+
+  it("materializes a completed synthesis without arming or dispatching again", async () => {
+    const events: string[] = [];
+    const result = await executeDurableSynthesis({
+      prepare: async () => ({
+        command: "prepare-synthesis",
+        requestId: "synthesis-request-1",
+        requestState: "completed",
+      }),
+      commitPrepared: async () => {
+        events.push("persist-materialized-draft");
+      },
+      arm: async () => {
+        events.push("unexpected-arm");
+      },
+      commitArmed: async () => {
+        events.push("unexpected-arm-push");
+      },
+      dispatch: async () => {
+        events.push("unexpected-model-dispatch");
+      },
+      commitOutcome: async () => {
+        events.push("unexpected-outcome-push");
+      },
+    });
+
+    expect(result).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "completed",
+    });
+    expect(events).toEqual(["persist-materialized-draft"]);
   });
 
   it("parses only the expected CLI result object", () => {
@@ -126,4 +501,417 @@ describe("GitHub literature workflow boundaries", () => {
       /Expected literature command/,
     );
   });
+
+  it("requires distinct explicit engine and state roots in GitHub Actions", () => {
+    expect(
+      resolveAutomationRoots(
+        {
+          GITHUB_ACTIONS: "true",
+          DEEPGENO_PROJECT_ROOT: "/checkout/engine",
+          DEEPGENO_STATE_ROOT: "/checkout/private-state",
+        },
+        "/fallback",
+      ),
+    ).toEqual({
+      projectRoot: "/checkout/engine",
+      stateRoot: "/checkout/private-state",
+    });
+    expect(() =>
+      resolveAutomationRoots(
+        { GITHUB_ACTIONS: "true", DEEPGENO_PROJECT_ROOT: "/checkout/engine" },
+        "/fallback",
+      ),
+    ).toThrow(/DEEPGENO_STATE_ROOT/);
+    expect(() =>
+      resolveAutomationRoots(
+        {
+          GITHUB_ACTIONS: "true",
+          DEEPGENO_PROJECT_ROOT: "/checkout/same",
+          DEEPGENO_STATE_ROOT: "/checkout/same",
+        },
+        "/fallback",
+      ),
+    ).toThrow(/distinct/);
+  });
+
+  it("builds every literature invocation with literal split roots and the engine cwd", () => {
+    const roots = {
+      projectRoot: "/checkout/engine",
+      stateRoot: "/checkout/private-state",
+    };
+    expect(
+      buildLiteratureInvocation("discover", ["--from", "2026-08-28"], roots),
+    ).toEqual({
+      command: "npm",
+      args: [
+        "run",
+        "--silent",
+        "literature",
+        "--",
+        "discover",
+        "--project-root",
+        "/checkout/engine",
+        "--state-root",
+        "/checkout/private-state",
+        "--from",
+        "2026-08-28",
+      ],
+      cwd: "/checkout/engine",
+    });
+    expect(automationWorkingDirectory("npm", roots)).toBe("/checkout/engine");
+    expect(automationWorkingDirectory("build", roots)).toBe("/checkout/engine");
+    expect(automationWorkingDirectory("privacy", roots)).toBe(
+      "/checkout/engine",
+    );
+    expect(automationWorkingDirectory("git", roots)).toBe(
+      "/checkout/private-state",
+    );
+    expect(automationWorkingDirectory("gh", roots)).toBe(
+      "/checkout/private-state",
+    );
+  });
+
+  it("requires the configured curator to be the exact normalized merge actor", () => {
+    const event = {
+      pull_request: { merged_by: { login: "Genome-Curator" } },
+    };
+    expect(assertMergedByCurator(event, " genome-curator ")).toBe(
+      "Genome-Curator",
+    );
+    expect(() => assertMergedByCurator(event, "another-curator")).toThrow(
+      /configured curator/,
+    );
+    expect(() => assertMergedByCurator(event, " ")).toThrow(
+      /DEEPGENO_CURATOR_GITHUB_LOGIN/,
+    );
+  });
+
+  it("binds private automation to the exact real private checkout and event origin", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-checkout-test-"));
+    roots.push(root);
+    const projectRoot = path.join(root, "engine");
+    const stateRoot = path.join(root, "state");
+    await mkdir(projectRoot);
+    await mkdir(stateRoot);
+    git(stateRoot, ["init"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    const event = { repository: { full_name: "example/private-state" } };
+
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).resolves.toMatchObject({ repository: "example/private-state" });
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--push",
+      "origin",
+      "https://github.com/example/attacker.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--delete",
+      "--push",
+      "origin",
+      "https://github.com/example/attacker.git",
+    ]);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "--add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, ["remote", "remove", "origin"]);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/Example/private-state.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    const nestedRoot = path.join(stateRoot, "nested");
+    await mkdir(nestedRoot);
+    await expect(
+      assertPrivateStateCheckout({
+        roots: { projectRoot, stateRoot: nestedRoot },
+        event,
+      }),
+    ).rejects.toThrow(/checkout root/);
+    git(stateRoot, [
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/wrong.git",
+    ]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/origin does not match/);
+    git(stateRoot, ["remote", "remove", "origin"]);
+    await expect(
+      assertPrivateStateCheckout({ roots: { projectRoot, stateRoot }, event }),
+    ).rejects.toThrow(/effective origin/);
+    git(stateRoot, [
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/example/private-state.git",
+    ]);
+    const linked = path.join(root, "linked-state");
+    await symlink(stateRoot, linked);
+    await expect(
+      assertPrivateStateCheckout({
+        roots: { projectRoot, stateRoot: linked },
+        event,
+      }),
+    ).rejects.toThrow(/symlink/);
+  });
+
+  it("pins every private gh invocation to the event repository", () => {
+    expect(privateGhArguments("example/private-state", ["pr", "list"])).toEqual(
+      ["pr", "list", "--repo", "example/private-state"],
+    );
+    expect(privateGhArguments("Example/private-state", ["pr", "list"])).toEqual(
+      ["pr", "list", "--repo", "Example/private-state"],
+    );
+  });
+
+  it("rechecks the private destination before state and review pushes", async () => {
+    const source = await readFile(
+      new URL("./automation.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /await assertPrivateStateRemote\(\{\s*stateRoot: roots\.stateRoot,/,
+    );
+    expect(source).toMatch(/privateGh\(\[\s*"pr",\s*"list"/);
+    expect(source).toMatch(/privateGh\(\[\s*"label",\s*"create"/);
+  });
+
+  it("runs shadow discovery in a disposable copy without mutating or accepting real state", async () => {
+    const fixture = await stagedFixture();
+    let accepted = 0;
+
+    const reports = await executeStagedDiscovery({
+      stateRoot: fixture.stateRoot,
+      runnerTemp: fixture.runnerTemp,
+      shadow: true,
+      discover: async (stagedStateRoot: string) => {
+        await writePrivateMutation(stagedStateRoot, "shadow-only");
+        return [
+          {
+            changedPaths: ["data/private/checkpoints/source.json"],
+            sourceIssues: [
+              { source: "fixture", code: "partial", message: "partial" },
+            ],
+          },
+        ];
+      },
+      accept: async () => {
+        accepted += 1;
+      },
+    });
+
+    expect(reports[0]!.sourceIssues).toHaveLength(1);
+    expect(accepted).toBe(0);
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("original");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("rejects non-shadow source issues before real-state mutation or Gate 1 acceptance", async () => {
+    const fixture = await stagedFixture();
+    let accepted = 0;
+
+    await expect(
+      executeStagedDiscovery({
+        stateRoot: fixture.stateRoot,
+        runnerTemp: fixture.runnerTemp,
+        shadow: false,
+        discover: async (stagedStateRoot: string) => {
+          await writePrivateMutation(stagedStateRoot, "must-not-promote");
+          return [
+            {
+              changedPaths: ["data/private/checkpoints/source.json"],
+              sourceIssues: [
+                {
+                  source: "fixture",
+                  code: "source_unavailable",
+                  message: "unavailable",
+                },
+              ],
+            },
+          ];
+        },
+        accept: async () => {
+          accepted += 1;
+        },
+      }),
+    ).rejects.toThrow(/source issue/);
+
+    expect(accepted).toBe(0);
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("original");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("promotes only validated private paths after a clean discovery", async () => {
+    const fixture = await stagedFixture();
+    let acceptedValue = "";
+
+    await executeStagedDiscovery({
+      stateRoot: fixture.stateRoot,
+      runnerTemp: fixture.runnerTemp,
+      shadow: false,
+      discover: async (stagedStateRoot: string) => {
+        await writePrivateMutation(stagedStateRoot, "promoted");
+        return [
+          {
+            changedPaths: ["data/private/checkpoints/source.json"],
+            sourceIssues: [],
+          },
+        ];
+      },
+      accept: async () => {
+        acceptedValue = await readFile(fixture.markerPath, "utf8");
+      },
+    });
+
+    expect(acceptedValue).toBe("promoted");
+    expect(await readFile(fixture.markerPath, "utf8")).toBe("promoted");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("keeps public CI while removing all public operational workflows", async () => {
+    const workflowRoot = path.resolve(
+      import.meta.dirname,
+      "../../.github/workflows",
+    );
+    expect((await readdir(workflowRoot)).sort()).toEqual(["ci.yml"]);
+  });
+
+  it("persists pending state before public delivery and persists the receipt afterward", async () => {
+    const events: string[] = [];
+    let privateRemoteState = "";
+
+    const result = await executeApprovedPublication({
+      publish: async () => {
+        events.push("seal-pending");
+        return { slug: "paper-slug", changedPaths: ["pending.json"] };
+      },
+      commitPending: async (publication: { changedPaths: string[] }) => {
+        expect(publication.changedPaths).toEqual(["pending.json"]);
+        privateRemoteState = "pending";
+        events.push("push-pending");
+      },
+      verifyProject: async () => {
+        expect(privateRemoteState).toBe("pending");
+        events.push("verify-project");
+      },
+      deliver: async (slug: string) => {
+        expect(slug).toBe("paper-slug");
+        expect(privateRemoteState).toBe("pending");
+        events.push("public-request");
+        return {
+          state: "pr-open",
+          pullRequestUrl: "https://github.com/example/public/pull/1",
+          changedPaths: ["receipt.json"],
+        };
+      },
+      commitReceipt: async (delivery: { changedPaths: string[] }) => {
+        expect(delivery.changedPaths).toEqual(["receipt.json"]);
+        privateRemoteState = "pr-open";
+        events.push("push-receipt");
+      },
+    });
+
+    expect(events).toEqual([
+      "seal-pending",
+      "push-pending",
+      "verify-project",
+      "public-request",
+      "push-receipt",
+    ]);
+    expect(privateRemoteState).toBe("pr-open");
+    expect(result.delivery.pullRequestUrl).toContain("/pull/1");
+  });
 });
+
+async function stagedFixture(): Promise<{
+  stateRoot: string;
+  runnerTemp: string;
+  markerPath: string;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), "deepgeno-workflow-test-"));
+  roots.push(root);
+  const stateRoot = path.join(root, "state");
+  const runnerTemp = path.join(root, "runner");
+  const markerPath = path.join(
+    stateRoot,
+    "data",
+    "private",
+    "checkpoints",
+    "source.json",
+  );
+  await mkdir(path.dirname(markerPath), { recursive: true });
+  await mkdir(runnerTemp, { recursive: true });
+  await writeFile(markerPath, "original", "utf8");
+  return { stateRoot, runnerTemp, markerPath };
+}
+
+async function writePrivateMutation(
+  stateRoot: string,
+  value: string,
+): Promise<void> {
+  const target = path.join(
+    stateRoot,
+    "data",
+    "private",
+    "checkpoints",
+    "source.json",
+  );
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, value, "utf8");
+}
+
+function git(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
+  }
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
+  }
+  return result.stdout;
+}

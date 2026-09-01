@@ -65,6 +65,7 @@ export interface StructuredModelRequest {
   prompt: string;
   schemaName: string;
   outputSchema: z.ZodType;
+  idempotencyKey?: string;
 }
 
 export interface StructuredModelResponse {

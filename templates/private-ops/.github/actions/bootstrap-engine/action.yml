@@ -1,0 +1,132 @@
+name: Bootstrap pinned DeepGeno engine
+description: Validate the private state root and fetch its exact trusted public-engine pin
+
+outputs:
+  project-root:
+    description: Canonical absolute root of the detached public engine
+    value: ${{ steps.bootstrap.outputs.project-root }}
+  node-version:
+    description: Canonical supported Node.js version from the pinned engine
+    value: ${{ steps.bootstrap.outputs.node-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate roots, lock, and pinned engine
+      id: bootstrap
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        fail() {
+          echo "bootstrap-engine: $*" >&2
+          exit 1
+        }
+
+        [[ -n "${GITHUB_WORKSPACE:-}" ]] || fail "GITHUB_WORKSPACE is required"
+        [[ -n "${RUNNER_TEMP:-}" ]] || fail "RUNNER_TEMP is required"
+        [[ -n "${GITHUB_OUTPUT:-}" ]] || fail "GITHUB_OUTPUT is required"
+        [[ -d "$GITHUB_WORKSPACE" && ! -L "$GITHUB_WORKSPACE" ]] || fail "GITHUB_WORKSPACE must be a real directory"
+        [[ -d "$RUNNER_TEMP" && ! -L "$RUNNER_TEMP" ]] || fail "RUNNER_TEMP must be a real directory"
+
+        workspace_root="$(realpath "$GITHUB_WORKSPACE")"
+        runner_temp_root="$(realpath "$RUNNER_TEMP")"
+        [[ "$workspace_root" == "$GITHUB_WORKSPACE" ]] || fail "GITHUB_WORKSPACE must already be canonical"
+        [[ "$runner_temp_root" == "$RUNNER_TEMP" ]] || fail "RUNNER_TEMP must already be canonical"
+        git_root="$(git -C "$workspace_root" rev-parse --show-toplevel)"
+        [[ "$(realpath "$git_root")" == "$workspace_root" ]] || fail "GITHUB_WORKSPACE must be the private Git top-level"
+
+        lock_path="$workspace_root/engine.lock.json"
+        [[ -f "$lock_path" && ! -L "$lock_path" ]] || fail "engine.lock.json must be a regular file, not a symlink"
+        commit="$(node --input-type=module - "$lock_path" <<'NODE'
+        import { lstatSync, readFileSync } from "node:fs";
+
+        const lockPath = process.argv[2];
+        const stat = lstatSync(lockPath);
+        if (!stat.isFile() || stat.isSymbolicLink()) {
+          throw new Error("engine.lock.json must be a regular file, not a symlink");
+        }
+        const lockBytes = readFileSync(lockPath, "utf8");
+        const lock = JSON.parse(lockBytes);
+        if (!lock || Array.isArray(lock) || typeof lock !== "object") {
+          throw new Error("engine.lock.json must be an object");
+        }
+        if (Object.keys(lock).sort().join(",") !== "commit,repository") {
+          throw new Error("engine.lock.json must contain exactly repository and commit");
+        }
+        if (lock.repository !== "Kuanhao-Chao/DeepGeno.watch") {
+          throw new Error("engine.lock.json names the wrong public repository");
+        }
+        if (
+          typeof lock.commit !== "string" ||
+          !/^[0-9a-f]{40}$/.test(lock.commit) ||
+          /^([0-9a-f])\1{39}$/.test(lock.commit)
+        ) {
+          throw new Error("engine.lock.json commit must be a non-sentinel lowercase 40-hex object ID");
+        }
+        const canonicalLock = `${JSON.stringify(
+          { repository: lock.repository, commit: lock.commit },
+          null,
+          2,
+        )}\n`;
+        if (lockBytes !== canonicalLock) {
+          throw new Error("engine.lock.json must use deterministic canonical bytes");
+        }
+        process.stdout.write(lock.commit);
+        NODE
+        )"
+
+        engine_root="$RUNNER_TEMP/deepgeno-engine"
+        [[ "$engine_root" == "$runner_temp_root/deepgeno-engine" ]] || fail "engine root must be exact"
+        case "$engine_root/" in
+          "$workspace_root/"*) fail "engine root must not be inside private state" ;;
+        esac
+        case "$workspace_root/" in
+          "$engine_root/"*) fail "private state must not be inside the engine root" ;;
+        esac
+        [[ ! -e "$engine_root" && ! -L "$engine_root" ]] || fail "engine destination already exists"
+
+        mkdir "$engine_root"
+        git -C "$engine_root" init --quiet
+        git -C "$engine_root" remote add origin https://github.com/Kuanhao-Chao/DeepGeno.watch.git
+        git -C "$engine_root" fetch --no-tags origin "$commit"
+        fetched="$(git -C "$engine_root" rev-parse --verify 'FETCH_HEAD^{commit}')"
+        [[ "$fetched" == "$commit" ]] || fail "exact commit fetch resolved to an unexpected object"
+        git -C "$engine_root" fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+        git -C "$engine_root" merge-base --is-ancestor "$commit" refs/remotes/origin/main || fail "engine pin is not an ancestor of public main"
+        git -C "$engine_root" checkout --detach "$commit"
+        head="$(git -C "$engine_root" rev-parse --verify 'HEAD^{commit}')"
+        [[ "$head" == "$commit" ]] || fail "detached engine HEAD does not equal the lock pin"
+
+        for required in \
+          .nvmrc \
+          package.json \
+          package-lock.json \
+          scripts/github/automation.mjs \
+          scripts/github/workflow-lib.mjs \
+          packages/literature/package.json \
+          config/relevance.yaml \
+          config/taxonomy.yaml \
+          prompts/summary/v1.md
+        do
+          [[ -f "$engine_root/$required" && ! -L "$engine_root/$required" ]] || fail "pinned engine is missing required file: $required"
+        done
+
+        node_version="$(node --input-type=module - "$engine_root/.nvmrc" <<'NODE'
+        import { readFileSync } from "node:fs";
+
+        const supportedNodeVersion = "22.18.0";
+        const bytes = readFileSync(process.argv[2], "utf8");
+        if (bytes !== `${supportedNodeVersion}\n`) {
+          throw new Error(`.nvmrc must contain exactly ${supportedNodeVersion} followed by one newline`);
+        }
+        process.stdout.write(supportedNodeVersion);
+        NODE
+        )"
+
+        {
+          echo "project-root=$engine_root"
+          echo "node-version=$node_version"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Pinned public engine $commit is ready at $engine_root"

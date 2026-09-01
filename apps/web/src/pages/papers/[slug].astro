@@ -38,7 +38,7 @@ const modelFacts = [
   ['Context length', data.architecture.contextLength],
 ].filter((fact): fact is [string, string] => Boolean(fact[1]));
 
-function formatLocator(locator: (typeof data.evidence.sources)[number]['locator']): string {
+function formatLocator(locator: (typeof data.evidence.references)[number]['locator']): string {
   return [
     locator.section,
     locator.paragraph ? `paragraph ${locator.paragraph}` : undefined,
@@ -69,7 +69,7 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
           <div><dt>Published</dt><dd><time datetime={date.toISOString()}>{formatDate(date)}</time></dd></div>
           <div><dt>Venue</dt><dd>{data.venue ?? titleCase(data.source)}</dd></div>
           <div><dt>Evidence</dt><dd>{evidenceLabel(data.evidence.scope)}</dd></div>
-          <div><dt>Reviewed</dt><dd><time datetime={data.provenance.review.approvedAt.toISOString()}>{formatDate(data.provenance.review.approvedAt)}</time></dd></div>
+          <div><dt>Approved</dt><dd><time datetime={data.provenance.review.approvedAt.toISOString()}>{formatDate(data.provenance.review.approvedAt)}</time></dd></div>
         </dl>
       </div>
       <div class="source-links" aria-label="Paper resources">
@@ -78,6 +78,7 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
         {data.doi && <a href={`https://doi.org/${data.doi}`} rel="noreferrer">DOI <span aria-hidden="true">↗</span></a>}
         {data.codeUrl && <a href={data.codeUrl} rel="noreferrer">Code <span aria-hidden="true">↗</span></a>}
         {data.dataUrl && <a href={data.dataUrl} rel="noreferrer">Data <span aria-hidden="true">↗</span></a>}
+        {data.projectUrl && <a href={data.projectUrl} rel="noreferrer">Project <span aria-hidden="true">↗</span></a>}
       </div>
       <div class="paper-head__axis"><GenomeAxis /></div>
     </header>
@@ -217,17 +218,16 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
           <p class="section-index">05</p>
           <h2>Evidence & provenance</h2>
           <p class="provenance__intro">
-            Claims above point to these source locators. Evidence links open the original source;
+            Claims above point to these Evidence References. Each link opens the original paper;
             generated text is rendered as plain structured fields, never executable markup.
           </p>
           <ol class="evidence-list">
-            {data.evidence.sources.map((source) => (
-              <li id={`evidence-${source.id}`}>
-                <span class="evidence-list__id">{source.id}</span>
+            {data.evidence.references.map((reference) => (
+              <li id={`evidence-${reference.id}`}>
+                <span class="evidence-list__id">{reference.id}</span>
                 <div>
-                  <p><strong>{titleCase(source.documentKind)}</strong> · {formatLocator(source.locator)}</p>
-                  <a href={source.sourceUrl} rel="noreferrer">Open evidence source <span aria-hidden="true">↗</span></a>
-                  <p class="digest">SHA-256 {source.contentSha256}</p>
+                  <p><strong>{titleCase(reference.documentKind)}</strong> · {formatLocator(reference.locator)}</p>
+                  <a href={reference.sourceUrl} rel="noreferrer">Open evidence reference <span aria-hidden="true">↗</span></a>
                 </div>
               </li>
             ))}
@@ -237,17 +237,7 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
             <div><dt>Generated</dt><dd><time datetime={data.provenance.generation.generatedAt.toISOString()}>{formatDate(data.provenance.generation.generatedAt)}</time></dd></div>
             <div><dt>Prompt</dt><dd>{data.provenance.generation.prompt.id} v{data.provenance.generation.prompt.version}</dd></div>
             <div><dt>Schema</dt><dd>v{data.provenance.generation.outputSchemaVersion}</dd></div>
-            <div><dt>Human review</dt><dd>{data.provenance.review.approvedBy.displayName ?? data.provenance.review.approvedBy.id}</dd></div>
-            <div><dt>Draft revision</dt><dd>{data.provenance.review.draftId} · r{data.provenance.review.draftRevision}</dd></div>
           </dl>
-          <details>
-            <summary>Integrity digests</summary>
-            <dl class="digest-list">
-              <div><dt>Input</dt><dd>{data.provenance.generation.inputSha256}</dd></div>
-              <div><dt>Prompt</dt><dd>{data.provenance.generation.prompt.sha256}</dd></div>
-              {data.provenance.review.commitSha && <div><dt>Commit</dt><dd>{data.provenance.review.commitSha}</dd></div>}
-            </dl>
-          </details>
         </section>
       </div>
     </div>
@@ -455,8 +445,7 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
   }
 
   .fact-grid dt,
-  .provenance-grid dt,
-  .digest-list dt {
+  .provenance-grid dt {
     color: var(--color-muted);
     font-family: var(--font-display);
     font-size: 0.66rem;
@@ -643,14 +632,6 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
     font-family: var(--font-mono);
   }
 
-  .digest {
-    margin-top: 0.28rem;
-    overflow-wrap: anywhere;
-    color: var(--color-muted);
-    font-family: var(--font-mono);
-    font-size: 0.58rem;
-  }
-
   .provenance-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -675,35 +656,6 @@ function formatLocator(locator: (typeof data.evidence.sources)[number]['locator'
   .provenance-grid dd {
     margin-top: 0.25rem;
     font-size: 0.78rem;
-  }
-
-  details {
-    margin-top: 1.5rem;
-  }
-
-  summary {
-    cursor: pointer;
-    color: var(--color-accent-strong);
-    font-family: var(--font-display);
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .digest-list {
-    margin-top: 0.8rem;
-  }
-
-  .digest-list div {
-    display: grid;
-    grid-template-columns: 4rem 1fr;
-    gap: 1rem;
-    padding: 0.4rem 0;
-  }
-
-  .digest-list dd {
-    overflow-wrap: anywhere;
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
   }
 
   @media (max-width: 52rem) {

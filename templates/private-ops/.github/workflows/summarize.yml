@@ -1,0 +1,409 @@
+name: Literature synthesis and publication
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation to run
+        type: choice
+        options:
+          - probe-model
+          - synthesize
+        default: probe-model
+        required: true
+      paper_id:
+        description: Selected canonical paper ID to synthesize or retry
+        type: string
+        required: false
+      revision_of:
+        description: Optional prior draft ID with a recorded revision request
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: literature-state
+  cancel-in-progress: false
+
+jobs:
+  probe-model:
+    name: Probe configured model access
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'probe-model'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: synthesis
+    steps:
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Probe configured model access without generation
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" probe-model
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+
+  record-triage:
+    name: Record merged Gate 1
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'literature-inbox')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      papers: ${{ steps.record.outputs.papers }}
+      selected_count: ${{ steps.record.outputs.selected_count }}
+    steps:
+      - name: Mint private-state contents token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - id: record
+        name: Persist candidate decisions
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" record-triage
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_CURATOR_GITHUB_LOGIN: ${{ vars.DEEPGENO_CURATOR_GITHUB_LOGIN }}
+          DEEPGENO_MAX_SUMMARIES_PER_RUN: ${{ vars.DEEPGENO_MAX_SUMMARIES_PER_RUN || '20' }}
+
+  synthesize-selected:
+    name: Synthesize ${{ matrix.paper }}
+    needs: record-triage
+    if: >-
+      needs.record-triage.result == 'success' &&
+      needs.record-triage.outputs.selected_count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        paper: ${{ fromJSON(needs.record-triage.outputs.papers) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: synthesis
+    steps:
+      - name: Mint private review token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Validate explicit model selection
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+      - name: Create private draft and Gate 2 pull request
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
+          INPUT_PAPER_ID: ${{ matrix.paper }}
+
+  synthesize-manual:
+    name: Synthesize requested paper
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'synthesize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: synthesis
+    steps:
+      - name: Mint private review token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Validate explicit model selection
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+      - name: Create private draft and Gate 2 pull request
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
+          INPUT_PAPER_ID: ${{ inputs.paper_id }}
+          INPUT_REVISION_OF: ${{ inputs.revision_of }}
+
+  record-summary:
+    name: Record merged Gate 2
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'summary-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      action: ${{ steps.record.outputs.action }}
+      draft_id: ${{ steps.record.outputs.draft_id }}
+      paper_id: ${{ steps.record.outputs.paper_id }}
+    steps:
+      - name: Mint private-state contents token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - id: record
+        name: Persist summary decision and review provenance
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" record-summary
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_CURATOR_GITHUB_LOGIN: ${{ vars.DEEPGENO_CURATOR_GITHUB_LOGIN }}
+
+  revise-requested:
+    name: Synthesize requested revision
+    needs: record-summary
+    if: needs.record-summary.outputs.action == 'revise'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: synthesis
+    steps:
+      - name: Mint private review token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Validate explicit model selection
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" validate-model
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+      - name: Create revised private draft and a new Gate 2 pull request
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
+          DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
+          DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
+          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
+          INPUT_PAPER_ID: ${{ needs.record-summary.outputs.paper_id }}
+          INPUT_REVISION_OF: ${{ needs.record-summary.outputs.draft_id }}
+
+  publish-approved:
+    name: Publish approved Gate 2
+    needs: record-summary
+    if: needs.record-summary.outputs.action == 'approve'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Mint private-state contents token
+        id: private-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch-state
+          permission-contents: write
+      - name: Mint public delivery token
+        id: public-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.DEEPGENO_PUBLIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEEPGENO_PUBLIC_APP_PRIVATE_KEY }}
+          owner: Kuanhao-Chao
+          repositories: DeepGeno.watch
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Check out trusted private main
+        uses: actions/checkout@v6
+        with:
+          repository: Kuanhao-Chao/DeepGeno.watch-state
+          ref: main
+          token: ${{ steps.private-app-token.outputs.token }}
+          fetch-depth: 0
+      - name: Bootstrap pinned public engine
+        id: bootstrap-engine
+        uses: ./.github/actions/bootstrap-engine
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ steps.bootstrap-engine.outputs.node-version }}
+      - name: Install pinned engine dependencies
+        run: npm ci
+        working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
+      - name: Confirm the fixed public destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEEPGENO_PUBLIC_REPOSITORY" == "Kuanhao-Chao/DeepGeno.watch" ]]
+        env:
+          DEEPGENO_PUBLIC_REPOSITORY: ${{ vars.DEEPGENO_PUBLIC_REPOSITORY }}
+      - name: Project, verify, seal, and open the public pull request
+        run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" publish-approved
+        env:
+          DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
+          DEEPGENO_STATE_ROOT: ${{ github.workspace }}
+          INPUT_DRAFT_ID: ${{ needs.record-summary.outputs.draft_id }}
+          DEEPGENO_PUBLIC_REPOSITORY: ${{ vars.DEEPGENO_PUBLIC_REPOSITORY }}
+          DEEPGENO_PUBLIC_GITHUB_TOKEN: ${{ steps.public-app-token.outputs.token }}

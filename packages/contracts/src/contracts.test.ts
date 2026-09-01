@@ -287,10 +287,10 @@ describe("configuration and publication", () => {
     expect(schema.type).toBe("object");
   });
 
-  it("keeps the public record detailed and human-approved", () => {
+  it("accepts only the v2 allowlisted public record", () => {
     const result = PublicPaperSchema.safeParse({
-      schemaVersion: "1.0",
-      paperId: "paper-1",
+      schemaVersion: "2.0",
+      slug: "a-paper-1234567",
       title: "A paper",
       authors: ["A. Author"],
       publishedAt: timestamp,
@@ -307,13 +307,12 @@ describe("configuration and publication", () => {
       evidence: {
         scope: "abstract-only",
         fullTextAvailable: false,
-        sources: [
+        references: [
           {
             id: "e1",
             documentKind: "abstract",
             sourceUrl: "https://example.org/paper-1",
             locator: { section: "Abstract" },
-            contentSha256: digest,
           },
         ],
       },
@@ -330,19 +329,153 @@ describe("configuration and publication", () => {
           provider: "openai",
           model: "configured-model",
           generatedAt: timestamp,
-          prompt: { id: "technical-summary", version: "1", sha256: digest },
+          prompt: { id: "technical-summary", version: "1" },
           outputSchemaVersion: "1.0",
-          inputSha256: digest,
         },
         review: {
-          draftId: "draft-1",
-          draftRevision: 1,
           approvedAt: timestamp,
-          approvedBy: { id: "curator", kind: "human" },
         },
       },
     });
     expect(result.success).toBe(true);
+
+    expect(
+      PublicPaperSchema.safeParse({
+        ...result.data,
+        paperId: "paper-1",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects non-public, duplicate, and unresolved public evidence references", () => {
+    const publicPaper = PublicPaperSchema.parse({
+      schemaVersion: "2.0",
+      slug: "a-paper-1234567",
+      title: "A paper",
+      authors: ["A. Author"],
+      publishedAt: timestamp,
+      updatedAt: timestamp,
+      source: "biorxiv",
+      url: "https://example.org/paper-1",
+      hook: summary.hook,
+      priority: "must-read",
+      progress: "queued",
+      tags: summary.tags,
+      topics: summary.topics,
+      organisms: summary.organisms,
+      modalities: summary.modalities,
+      evidence: {
+        scope: "abstract-only",
+        fullTextAvailable: false,
+        references: [
+          {
+            id: "e1",
+            documentKind: "abstract",
+            sourceUrl: "https://example.org/paper-1",
+            locator: { section: "Abstract" },
+          },
+        ],
+      },
+      coreProblem: statement,
+      novelty: [statement],
+      architecture: summary.architecture,
+      datasets: summary.data.datasets,
+      benchmarks: summary.data.benchmarks,
+      results: summary.quantitativeResults,
+      takeaways: [statement],
+      limitations: [statement],
+      provenance: {
+        generation: {
+          provider: "openai",
+          model: "configured-model",
+          generatedAt: timestamp,
+          prompt: { id: "technical-summary", version: "1" },
+          outputSchemaVersion: "1.0",
+        },
+        review: { approvedAt: timestamp },
+      },
+    });
+
+    const privateEvidence = "private-evidence-a";
+    const invalidReferences = [
+      {
+        coreProblem: {
+          ...publicPaper.coreProblem,
+          evidenceIds: [privateEvidence],
+        },
+      },
+      {
+        novelty: [
+          { ...publicPaper.novelty[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+      {
+        architecture: {
+          ...publicPaper.architecture,
+          evidenceIds: [privateEvidence],
+        },
+      },
+      {
+        datasets: [
+          { ...publicPaper.datasets[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+      {
+        benchmarks: [
+          { ...publicPaper.benchmarks[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+      {
+        results: [
+          { ...publicPaper.results[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+      {
+        takeaways: [
+          { ...publicPaper.takeaways[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+      {
+        limitations: [
+          { ...publicPaper.limitations[0]!, evidenceIds: [privateEvidence] },
+        ],
+      },
+    ];
+    for (const replacement of invalidReferences) {
+      expect(
+        PublicPaperSchema.safeParse({ ...publicPaper, ...replacement }).success,
+      ).toBe(false);
+    }
+
+    expect(
+      PublicPaperSchema.safeParse({
+        ...publicPaper,
+        evidence: {
+          ...publicPaper.evidence,
+          references: [
+            { ...publicPaper.evidence.references[0]!, id: privateEvidence },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PublicPaperSchema.safeParse({
+        ...publicPaper,
+        evidence: {
+          ...publicPaper.evidence,
+          references: [
+            ...publicPaper.evidence.references,
+            publicPaper.evidence.references[0]!,
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PublicPaperSchema.safeParse({
+        ...publicPaper,
+        coreProblem: { ...publicPaper.coreProblem, evidenceIds: ["e2"] },
+      }).success,
+    ).toBe(false);
   });
 
   it("parses the rich summary independently", () => {

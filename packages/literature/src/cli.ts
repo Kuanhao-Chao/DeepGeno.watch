@@ -13,7 +13,6 @@ import type {
   MetadataEnricher,
   StructuredModel,
 } from "./ports.js";
-import { renderPublicMarkdown } from "./publication.js";
 import { parseCandidateReview, parseDraftReview } from "./review.js";
 import { ArxivOaiSource } from "./sources/arxiv.js";
 import { BioRxivSource } from "./sources/biorxiv.js";
@@ -23,12 +22,32 @@ import { EuropePmcSearchSource } from "./sources/europe-pmc-search.js";
 import { OpenAlexDoiEnricher } from "./sources/openalex.js";
 import { GitFileStateStore } from "./store.js";
 import { LiteratureError, invariant } from "./errors.js";
+import {
+  assertGitHubRepository,
+  deliverStoredPublication,
+} from "./delivery.js";
+import { GitHubRestDeliveryAdapter } from "./github-rest.js";
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseArguments(argv);
-  const root = path.resolve(parsed.flags.root ?? process.cwd());
-  const config = await loadPipelineConfig(root);
-  const store = new GitFileStateStore(root);
+  const { projectRoot, stateRoot } = resolveCliRoots(parsed.command, {
+    flags: parsed.flags,
+  });
+  const store = new GitFileStateStore(stateRoot);
+  if (parsed.command === "deliver") {
+    const deliveryConfig = resolvePublicDeliveryConfig(process.env);
+    const report = await deliverStoredPublication({
+      store,
+      slug: requiredFlag(parsed, "slug"),
+      repository: deliveryConfig.repository,
+      port: new GitHubRestDeliveryAdapter({ token: deliveryConfig.token }),
+    });
+    process.stdout.write(
+      `${JSON.stringify({ command: parsed.command, ...(report as object) })}\n`,
+    );
+    return;
+  }
+  const config = await loadPipelineConfig(projectRoot);
   const http = new AllowlistedHttpClient({
     minimumIntervalMsByHost: {
       ...(config.arxiv.enabled
@@ -146,6 +165,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       report = await lifecycle.applyDecisions(decisions);
       break;
     }
+    case "prepare-synthesis": {
+      const lifecycle = createLiteratureLifecycle({
+        ...baseOptions,
+        model: configuredModel(),
+      });
+      report = await lifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: requiredFlag(parsed, "paper"),
+        ...(parsed.flags["revision-of"]
+          ? { revisionOfDraftId: parsed.flags["revision-of"] }
+          : {}),
+      });
+      break;
+    }
+    case "arm-synthesis": {
+      const lifecycle = createLiteratureLifecycle(baseOptions);
+      report = await lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: requiredFlag(parsed, "request"),
+      });
+      break;
+    }
     case "synthesize": {
       const lifecycle = createLiteratureLifecycle({
         ...baseOptions,
@@ -153,10 +194,18 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       });
       report = await lifecycle.run({
         kind: "synthesize",
-        paperId: requiredFlag(parsed, "paper"),
-        ...(parsed.flags["revision-of"]
-          ? { revisionOfDraftId: parsed.flags["revision-of"] }
-          : {}),
+        requestId: requiredFlag(parsed, "request"),
+        executionToken: requiredFlag(parsed, "execution-token"),
+      });
+      break;
+    }
+    case "reconcile-synthesis": {
+      const lifecycle = createLiteratureLifecycle(baseOptions);
+      report = await lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: requiredFlag(parsed, "request"),
+        expectedUpdatedAt: requiredFlag(parsed, "expected-updated-at"),
+        note: requiredFlag(parsed, "note"),
       });
       break;
     }
@@ -207,26 +256,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         "projection_error",
         "Unexpected projection type",
       );
-      const changedPaths: string[] = [];
-      for (const publication of await store.listPublications()) {
-        const draft = await store.loadDraft(publication.review.draftId);
-        const target = await store.writePublicPaper(
-          publication.slug,
-          renderPublicMarkdown(publication, draft),
-        );
-        changedPaths.push(store.relative(target));
-      }
       report = {
         command: "project",
         publishedCount: catalog.papers.length,
-        changedPaths: changedPaths.sort(),
+        changedPaths: [],
       };
       break;
     }
     default:
       throw new LiteratureError(
         "unknown_command",
-        "Expected discover, apply-triage, synthesize, apply-draft, publish, or project",
+        "Expected discover, apply-triage, prepare-synthesis, arm-synthesis, synthesize, reconcile-synthesis, apply-draft, publish, deliver, or project",
       );
   }
   process.stdout.write(
@@ -237,6 +277,75 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 interface ParsedArguments {
   command: string;
   flags: Record<string, string | undefined>;
+}
+
+const PRIVATE_STATE_COMMANDS = new Set([
+  "discover",
+  "apply-triage",
+  "prepare-synthesis",
+  "arm-synthesis",
+  "synthesize",
+  "reconcile-synthesis",
+  "apply-draft",
+  "publish",
+  "deliver",
+  "project",
+]);
+
+export function resolvePublicDeliveryConfig(environment: NodeJS.ProcessEnv): {
+  repository: string;
+  token: string;
+} {
+  const repository = environment.DEEPGENO_PUBLIC_REPOSITORY?.trim();
+  invariant(
+    repository,
+    "delivery_repository_required",
+    "DEEPGENO_PUBLIC_REPOSITORY is required for public delivery",
+  );
+  assertGitHubRepository(repository);
+  const token = environment.DEEPGENO_PUBLIC_GITHUB_TOKEN?.trim();
+  invariant(
+    token,
+    "github_token_required",
+    "DEEPGENO_PUBLIC_GITHUB_TOKEN is required for public delivery",
+  );
+  return { repository, token };
+}
+
+export function resolveCliRoots(
+  command: string,
+  options: {
+    flags: Record<string, string | undefined>;
+    environment?: NodeJS.ProcessEnv;
+    cwd?: string;
+  },
+): { projectRoot: string; stateRoot: string } {
+  const environment = options.environment ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  if (
+    environment.GITHUB_ACTIONS === "true" &&
+    PRIVATE_STATE_COMMANDS.has(command)
+  ) {
+    invariant(
+      options.flags["state-root"],
+      "state_root_required",
+      "Private-state commands in GitHub Actions require --state-root",
+    );
+  }
+  const projectRoot =
+    options.flags["project-root"] ??
+    environment.DEEPGENO_PROJECT_ROOT ??
+    options.flags.root ??
+    cwd;
+  const stateRoot =
+    options.flags["state-root"] ??
+    environment.DEEPGENO_STATE_ROOT ??
+    options.flags.root ??
+    cwd;
+  return {
+    projectRoot: path.resolve(cwd, projectRoot),
+    stateRoot: path.resolve(cwd, stateRoot),
+  };
 }
 
 function parseArguments(argv: string[]): ParsedArguments {

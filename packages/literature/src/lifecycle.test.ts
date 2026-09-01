@@ -1,18 +1,29 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { TechnicalSummary } from "@deepgeno/contracts";
-import { createLiteratureLifecycle } from "./lifecycle.js";
+import type { PublishedPaper, TechnicalSummary } from "@deepgeno/contracts";
+import {
+  createLiteratureLifecycle,
+  type LiteratureLifecycle,
+  type RunReport,
+} from "./lifecycle.js";
 import { FakeStructuredModel } from "./models/fake.js";
+import {
+  projectionFromRelease,
+  type Delivery,
+  type PrivateRelease,
+} from "./release.js";
 import type {
   LiteratureSource,
   MetadataEnricher,
   SourceDocument,
+  StructuredModelRequest,
 } from "./ports.js";
 import { parseCandidateReview, parseDraftReview } from "./review.js";
 import { FixtureSource } from "./sources/fixture.js";
 import { GitFileStateStore } from "./store.js";
+import { sha256, stableJson } from "./util.js";
 
 const roots: string[] = [];
 const now = "2026-08-28T07:00:00.000Z";
@@ -24,10 +35,275 @@ afterEach(async () => {
 });
 
 describe("LiteratureLifecycle", () => {
+  it("persists preparation and one-use arming before model dispatch", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }),
+    );
+
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    expect(prepared).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "prepared",
+    });
+    expect(modelCalls).toBe(0);
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+
+    const armed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    expect(armed).toMatchObject({
+      command: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (armed.command !== "arm-synthesis") throw new Error("Unexpected report");
+    expect(armed.executionToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(modelCalls).toBe(0);
+    const armedRecord = await readFile(
+      fixture.store.synthesisRequestPath(prepared.requestId),
+      "utf8",
+    );
+    expect(armedRecord).not.toContain(armed.executionToken);
+    expect(JSON.parse(armedRecord)).toMatchObject({
+      state: "armed",
+      executionTokenSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "synthesize",
+        requestId: prepared.requestId,
+        executionToken: "wrong-one-use-token",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_execution_token_invalid" });
+    expect(modelCalls).toBe(0);
+
+    const completed = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: armed.executionToken,
+    });
+    expect(completed).toMatchObject({
+      command: "synthesize",
+      requestId: prepared.requestId,
+      outcome: "completed",
+      paperId: fixture.paperId,
+    });
+    expect(modelCalls).toBe(1);
+  });
+
+  it("allows exactly one concurrent arming transition", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }),
+    );
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+
+    const attempts = await Promise.allSettled([
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+    ]);
+
+    expect(
+      attempts.filter((attempt) => attempt.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      attempts.filter((attempt) => attempt.status === "rejected"),
+    ).toHaveLength(1);
+    expect(
+      attempts.find((attempt) => attempt.status === "rejected"),
+    ).toMatchObject({
+      reason: { code: "synthesis_reconciliation_required" },
+    });
+    expect(modelCalls).toBe(0);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({ state: "armed" });
+  });
+
+  it("rejects model configuration drift before arming", async () => {
+    let modelCalls = 0;
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }, "prepared-model"),
+    );
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+    const driftedLifecycle = createLiteratureLifecycle({
+      store: fixture.store,
+      sources: [new FixtureSource([sourceRecord({})])],
+      model: new FakeStructuredModel(() => {
+        modelCalls += 1;
+        return summaryFixture("abstract-only");
+      }, "different-model"),
+      clock: () => new Date(now),
+      relevanceThreshold: 0.2,
+    });
+
+    await expect(
+      driftedLifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: fixture.paperId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_model_mismatch" });
+    expect(modelCalls).toBe(0);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({ state: "prepared", model: "prepared-model" });
+  });
+
+  it("fails closed after an ambiguous provider outcome until explicit CAS reconciliation", async () => {
+    let modelCalls = 0;
+    const idempotencyKeys: Array<string | undefined> = [];
+    const fixture = await selectedLifecycle(
+      new FakeStructuredModel((request: StructuredModelRequest) => {
+        modelCalls += 1;
+        idempotencyKeys.push(request.idempotencyKey);
+        if (modelCalls === 1)
+          throw new Error("timeout after the provider accepted the request");
+        return summaryFixture("abstract-only");
+      }),
+    );
+
+    const prepared = await fixture.lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: fixture.paperId,
+    });
+    if (prepared.command !== "prepare-synthesis")
+      throw new Error("Unexpected report");
+    const armed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (armed.command !== "arm-synthesis") throw new Error("Unexpected report");
+
+    const ambiguous = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: armed.executionToken,
+    });
+    expect(ambiguous).toMatchObject({
+      command: "synthesize",
+      requestId: prepared.requestId,
+      outcome: "ambiguous",
+    });
+    expect(modelCalls).toBe(1);
+    const ambiguousRequest = await fixture.store.loadSynthesisRequest(
+      prepared.requestId,
+    );
+    expect(ambiguousRequest).toMatchObject({ state: "ambiguous" });
+    if (!ambiguousRequest) throw new Error("Expected an ambiguous request");
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "prepare-synthesis",
+        paperId: fixture.paperId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "arm-synthesis",
+        requestId: prepared.requestId,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "synthesize",
+        requestId: prepared.requestId,
+        executionToken: armed.executionToken,
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_required" });
+    expect(modelCalls).toBe(1);
+
+    await expect(
+      fixture.lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: prepared.requestId,
+        expectedUpdatedAt: "not-an-iso-timestamp",
+        note: "Provider records confirm no completed response.",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_timestamp_invalid" });
+    await expect(
+      fixture.lifecycle.run({
+        kind: "reconcile-synthesis",
+        requestId: prepared.requestId,
+        expectedUpdatedAt: "2026-08-28T06:59:59.000Z",
+        note: "Provider records confirm no completed response.",
+      }),
+    ).rejects.toMatchObject({ code: "synthesis_reconciliation_stale" });
+
+    const reconciled = await fixture.lifecycle.run({
+      kind: "reconcile-synthesis",
+      requestId: prepared.requestId,
+      expectedUpdatedAt: ambiguousRequest.updatedAt,
+      note: "Provider records confirm no completed response.",
+    });
+    expect(reconciled).toMatchObject({
+      command: "reconcile-synthesis",
+      requestState: "prepared",
+    });
+    const rearmed = await fixture.lifecycle.run({
+      kind: "arm-synthesis",
+      requestId: prepared.requestId,
+    });
+    if (rearmed.command !== "arm-synthesis")
+      throw new Error("Unexpected report");
+    const completed = await fixture.lifecycle.run({
+      kind: "synthesize",
+      requestId: prepared.requestId,
+      executionToken: rearmed.executionToken,
+    });
+    expect(completed).toMatchObject({
+      command: "synthesize",
+      outcome: "completed",
+    });
+    expect(modelCalls).toBe(2);
+    expect(idempotencyKeys).toEqual([prepared.requestId, prepared.requestId]);
+    expect(
+      await fixture.store.loadSynthesisRequest(prepared.requestId),
+    ).toMatchObject({
+      state: "completed",
+      reconciliations: [
+        expect.objectContaining({
+          priorState: "ambiguous",
+          note: "Provider records confirm no completed response.",
+        }),
+      ],
+    });
+  });
+
   it("enforces both human gates and publishes one deduplicated evidence-backed paper", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-lifecycle-"));
     roots.push(root);
-    const store = new GitFileStateStore(root);
+    const store = new FaultInjectingStore(root);
     const primary = sourceRecord({
       source: "biorxiv",
       sourceId: "10.1101/2026.08.28.123456",
@@ -87,7 +363,7 @@ describe("LiteratureLifecycle", () => {
     const paperId = batch.candidates[0]!.paper.id;
 
     await expect(
-      lifecycle.run({ kind: "synthesize", paperId }),
+      lifecycle.run({ kind: "prepare-synthesis", paperId }),
     ).rejects.toMatchObject({
       code: "synthesis_not_selected",
     });
@@ -114,9 +390,7 @@ describe("LiteratureLifecycle", () => {
       selectedPaperIds: [paperId],
     });
 
-    const synthesis = await lifecycle.run({ kind: "synthesize", paperId });
-    if (synthesis.command !== "synthesize")
-      throw new Error("Unexpected report");
+    const synthesis = await synthesizeSelected(lifecycle, paperId);
     expect(modelCalls).toBe(1);
     expect(
       synthesis.changedPaths.every((entry) =>
@@ -174,12 +448,7 @@ describe("LiteratureLifecycle", () => {
     });
     await lifecycle.applyDecisions(revisionRequest);
 
-    const revision = await lifecycle.run({
-      kind: "synthesize",
-      paperId,
-      revisionOfDraftId: draft.id,
-    });
-    if (revision.command !== "synthesize") throw new Error("Unexpected report");
+    const revision = await synthesizeSelected(lifecycle, paperId, draft.id);
     expect(modelCalls).toBe(2);
     const revisedDraft = await store.loadDraft(revision.draftId);
     expect(revisedDraft).toMatchObject({
@@ -224,32 +493,188 @@ describe("LiteratureLifecycle", () => {
       commitSha: "a".repeat(40),
     });
 
+    store.failReleaseOnce = true;
+    store.failDeliveryOnce = true;
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: revisedDraft.id }),
+    ).rejects.toMatchObject({ code: "fault_release" });
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: revisedDraft.id }),
+    ).rejects.toMatchObject({ code: "fault_delivery" });
     const publication = await lifecycle.run({
       kind: "publish",
       draftId: revisedDraft.id,
     });
     if (publication.command !== "publish") throw new Error("Unexpected report");
-    expect(publication.publicPath).toMatch(/^content\/public\/papers\/.+\.md$/);
-    const publicMarkdown = await readFile(
-      path.join(root, publication.publicPath),
+    expect(publication).toMatchObject({
+      privatePublicationPath: expect.stringMatching(
+        /^data\/private\/publications\/.+\.json$/,
+      ),
+      releasePath: expect.stringMatching(/^data\/private\/releases\/.+\.json$/),
+      deliveryPath: expect.stringMatching(
+        /^data\/private\/deliveries\/.+\.json$/,
+      ),
+      publicDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(publication.changedPaths).toEqual([publication.deliveryPath]);
+    expect(await store.listPublications()).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "releases")),
+    ).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "deliveries")),
+    ).toHaveLength(1);
+    const storedPublication = await store.loadPublication(publication.slug);
+    if (!storedPublication) throw new Error("Expected publication");
+    const release = await store.loadReleaseForPublication(
+      publication.slug,
+      storedPublication,
+    );
+    if (!release) throw new Error("Expected sealed release");
+    const sealedMarkdown = new TextDecoder().decode(
+      projectionFromRelease(release).bytes,
+    );
+    expect(sealedMarkdown).toContain("priority: must-read");
+    expect(sealedMarkdown).not.toContain(primary.abstract);
+    await expect(
+      store.saveRelease(
+        {
+          ...release,
+          createdAt: "2026-08-28T07:01:00.000Z",
+        },
+        storedPublication,
+      ),
+    ).rejects.toMatchObject({ code: "immutable_conflict" });
+    const tamperedPublication = {
+      ...storedPublication,
+      updatedAt: "2026-08-29T07:00:00.000Z",
+    };
+    await writeFile(
+      store.publicationPath(publication.slug),
+      JSON.stringify(tamperedPublication),
       "utf8",
     );
-    expect(publicMarkdown).toContain("priority: must-read");
-    expect(publicMarkdown).not.toContain(primary.abstract);
+    await expect(
+      store.loadReleaseForPublication(publication.slug, tamperedPublication),
+    ).rejects.toMatchObject({ code: "release_publication_mismatch" });
+    await writeFile(
+      store.publicationPath(publication.slug),
+      JSON.stringify(storedPublication),
+      "utf8",
+    );
+    await expect(
+      readdir(path.join(root, "content", "public", "papers")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const refreshed = await store.loadPaper(paperId);
+    refreshed.paper.title =
+      "A refreshed title must not change publication identity";
+    await store.savePaper(refreshed);
+
+    const publishedReplay = await lifecycle.run({
+      kind: "publish",
+      draftId: revisedDraft.id,
+    });
+    expect(publishedReplay).toMatchObject({
+      command: "publish",
+      privatePublicationPath: publication.privatePublicationPath,
+      releasePath: publication.releasePath,
+      deliveryPath: publication.deliveryPath,
+      publicDigest: publication.publicDigest,
+      changedPaths: [],
+    });
+
+    const deliveryBefore = await store.loadDeliveryForRelease(release);
+    if (!deliveryBefore) throw new Error("Expected delivery");
+    const publicationBefore = await readFile(
+      store.publicationPath(publication.slug),
+      "utf8",
+    );
+    const releaseBefore = await readFile(store.releasePath(release), "utf8");
+    const deliveryBeforeFile = await readFile(
+      store.deliveryPath(deliveryBefore),
+      "utf8",
+    );
+    const sealedBytesBefore = projectionFromRelease(release).bytes;
+    const { recordSha256: _oldRecord, ...laterCore } = revisedDraft;
+    const laterDraftCore = {
+      ...laterCore,
+      id: `${revisedDraft.id}-later`,
+      revision: revisedDraft.revision + 1,
+    };
+    const laterDraft = {
+      ...laterDraftCore,
+      recordSha256: sha256(stableJson(laterDraftCore)),
+    };
+    await store.saveDraft(laterDraft);
+    const laterProjection = await lifecycle.project({
+      kind: "draft-inbox",
+      draftId: laterDraft.id,
+    });
+    if (laterProjection.kind !== "draft-inbox")
+      throw new Error("Unexpected projection");
+    const laterApproval = parseDraftReview(
+      laterProjection.markdown
+        .replace("- [ ] Approve and publish", "- [x] Approve and publish")
+        .replace("- [ ] Must-Read", "- [x] Must-Read")
+        .replace("- [x] Recommended", "- [ ] Recommended"),
+      laterDraft,
+      { actor: { id: "curator", kind: "human" }, decidedAt: now },
+    );
+    await lifecycle.applyDecisions(laterApproval);
+    await expect(
+      lifecycle.run({ kind: "publish", draftId: laterDraft.id }),
+    ).rejects.toMatchObject({ code: "publication_draft_mismatch" });
+    expect(await store.listPublications()).toHaveLength(1);
+    const publicationAfter = await store.loadPublication(publication.slug);
+    if (!publicationAfter) throw new Error("Expected publication");
+    const releaseAfter = await store.loadReleaseForPublication(
+      publication.slug,
+      publicationAfter,
+    );
+    if (!releaseAfter) throw new Error("Expected release");
+    const deliveryAfter = await store.loadDeliveryForRelease(releaseAfter);
+    expect(deliveryAfter).toEqual(deliveryBefore);
+    expect(
+      await readFile(store.publicationPath(publication.slug), "utf8"),
+    ).toBe(publicationBefore);
+    expect(await readFile(store.releasePath(releaseAfter), "utf8")).toBe(
+      releaseBefore,
+    );
+    expect(await readFile(store.deliveryPath(deliveryBefore), "utf8")).toBe(
+      deliveryBeforeFile,
+    );
+    expect(projectionFromRelease(releaseAfter).bytes).toEqual(
+      sealedBytesBefore,
+    );
+    expect(
+      await readdir(path.join(root, "data", "private", "releases")),
+    ).toHaveLength(1);
+    expect(
+      await readdir(path.join(root, "data", "private", "deliveries")),
+    ).toHaveLength(1);
 
     const catalog = await lifecycle.project({ kind: "public-catalog" });
     if (catalog.kind !== "public-catalog")
       throw new Error("Unexpected projection");
     expect(catalog.papers).toHaveLength(1);
     expect(catalog.papers[0]).toMatchObject({
-      paperId,
+      schemaVersion: "2.0",
       priority: "must-read",
       evidence: { scope: "full-text" },
-      provenance: { review: { approvedBy: { id: "curator" } } },
+      provenance: { review: { approvedAt: now } },
     });
+    expect(catalog.papers[0]).not.toHaveProperty("paperId");
 
-    const replay = await lifecycle.run({ kind: "synthesize", paperId });
-    expect(replay).toMatchObject({ command: "synthesize", changedPaths: [] });
+    const replay = await lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId,
+    });
+    expect(replay).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "completed",
+      changedPaths: [],
+    });
     expect(modelCalls).toBe(2);
   });
 
@@ -368,6 +793,77 @@ describe("LiteratureLifecycle", () => {
   });
 });
 
+async function selectedLifecycle(model: FakeStructuredModel): Promise<{
+  lifecycle: LiteratureLifecycle;
+  store: GitFileStateStore;
+  paperId: string;
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), "deepgeno-synthesis-"));
+  roots.push(root);
+  const store = new GitFileStateStore(root);
+  const lifecycle = createLiteratureLifecycle({
+    store,
+    sources: [new FixtureSource([sourceRecord({})])],
+    model,
+    clock: () => new Date(now),
+    relevanceThreshold: 0.2,
+  });
+  const discovery = await lifecycle.run({
+    kind: "discover",
+    from: "2026-08-28",
+    to: "2026-08-28",
+    trigger: "test",
+  });
+  if (discovery.command !== "discover") throw new Error("Unexpected report");
+  const batch = await store.loadCandidateBatch(discovery.batchId);
+  const projection = await lifecycle.project({
+    kind: "candidate-inbox",
+    batchId: batch.id,
+  });
+  if (projection.kind !== "candidate-inbox")
+    throw new Error("Unexpected projection");
+  const decision = parseCandidateReview(
+    projection.markdown.replace("- [ ] Summarize", "- [x] Summarize"),
+    batch,
+    { actor: { id: "curator", kind: "human" }, decidedAt: now },
+  );
+  await lifecycle.applyDecisions(decision);
+  return { lifecycle, store, paperId: batch.candidates[0]!.paper.id };
+}
+
+async function synthesizeSelected(
+  lifecycle: LiteratureLifecycle,
+  paperId: string,
+  revisionOfDraftId?: string,
+): Promise<
+  Extract<RunReport, { command: "synthesize"; outcome: "completed" }>
+> {
+  const prepared = await lifecycle.run({
+    kind: "prepare-synthesis",
+    paperId,
+    ...(revisionOfDraftId ? { revisionOfDraftId } : {}),
+  });
+  if (
+    prepared.command !== "prepare-synthesis" ||
+    prepared.requestState !== "prepared"
+  )
+    throw new Error("Expected a newly prepared synthesis request");
+  const armed = await lifecycle.run({
+    kind: "arm-synthesis",
+    requestId: prepared.requestId,
+  });
+  if (armed.command !== "arm-synthesis")
+    throw new Error("Expected an armed synthesis request");
+  const completed = await lifecycle.run({
+    kind: "synthesize",
+    requestId: prepared.requestId,
+    executionToken: armed.executionToken,
+  });
+  if (completed.command !== "synthesize" || completed.outcome !== "completed")
+    throw new Error("Expected a completed synthesis request");
+  return completed;
+}
+
 function sourceRecord(overrides: Partial<SourceDocument>): SourceDocument {
   return {
     source: "biorxiv",
@@ -485,3 +981,31 @@ const failingEnricher: MetadataEnricher = {
     throw new Error("fixture enrichment unavailable");
   },
 };
+
+class FaultInjectingStore extends GitFileStateStore {
+  failReleaseOnce = false;
+  failDeliveryOnce = false;
+
+  override async saveRelease(
+    release: PrivateRelease,
+    publication: PublishedPaper,
+  ): Promise<string> {
+    if (this.failReleaseOnce) {
+      this.failReleaseOnce = false;
+      throw Object.assign(new Error("release fault"), {
+        code: "fault_release",
+      });
+    }
+    return super.saveRelease(release, publication);
+  }
+
+  override async saveDelivery(delivery: Delivery): Promise<string> {
+    if (this.failDeliveryOnce) {
+      this.failDeliveryOnce = false;
+      throw Object.assign(new Error("delivery fault"), {
+        code: "fault_delivery",
+      });
+    }
+    return super.saveDelivery(delivery);
+  }
+}
