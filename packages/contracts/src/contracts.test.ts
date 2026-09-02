@@ -7,6 +7,7 @@ import {
   CandidateSchema,
   DraftSummarySchema,
   EvidencePacketSchema,
+  ModelProviderSchema,
   PrioritySchema,
   ProgressSchema,
   PublicPaperSchema,
@@ -200,6 +201,12 @@ describe("candidate triage", () => {
 });
 
 describe("evidence-grounded summaries", () => {
+  it("accepts Cloudflare Workers AI as an explicit generation provider", () => {
+    expect(ModelProviderSchema.parse("cloudflare-workers-ai")).toBe(
+      "cloudflare-workers-ai",
+    );
+  });
+
   it("rejects evidence references to unknown documents", () => {
     const result = EvidencePacketSchema.safeParse({
       ...evidence,

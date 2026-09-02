@@ -51,8 +51,9 @@ npm run dev
 ```
 
 No model provider is selected by default. Local synthesis requires exactly one
-explicit provider, model, output ceiling, and matching key. There is no automatic
-cross-provider failover, so provenance, failures, and spend remain auditable.
+explicit provider, model, output ceiling, and matching credential set (including a
+Cloudflare account ID for Workers AI). There is no automatic cross-provider failover,
+so provenance, failures, and quota remain auditable.
 
 ## Editorial workflow
 
@@ -72,9 +73,11 @@ cross-provider failover, so provenance, failures, and spend remain auditable.
 
 Canonical identifiers, input digests, immutable revisions, sealed releases, and
 reconciled outbox states make retries idempotent without duplicating branches or pull
-requests. Paid synthesis separately pushes prepared and one-use armed states before
-dispatch; uncertain provider outcomes block automatic replay until explicit curator
-reconciliation, and OpenAI also receives the stable request ID as an idempotency key.
+requests. Provider-backed synthesis separately pushes prepared and one-use armed states
+before dispatch; uncertain outcomes block automatic replay until explicit curator
+reconciliation. OpenAI receives the stable request ID as an idempotency key when that
+provider is explicitly selected; the initial Workers AI path relies on the durable
+private request state and makes only one network attempt.
 
 ## Private companion setup
 
@@ -86,22 +89,26 @@ the committed, browser-guided setup from a clean standard clone:
 ```
 
 Its eight confirmed stages validate a current GitHub CLI, create or validate the exact
-private companion, pin and render the public engine, configure repository and protected
-environment values, guide a least-privilege two-repository GitHub App, persist only its
-client ID/key, run the private token-scope preflight, and stop at the cutover checklist.
-It does not dispatch live ingestion, merge review gates, change public rules, or alter
-Cloudflare. The current system `gh` 0.11.0 is too old; upgrade GitHub CLI and restart
-the shell before running the wizard.
+private companion, sync the eight allowlisted wrappers and public-engine pin, configure
+repository and protected-environment values, guide a least-privilege two-repository
+GitHub App, persist only its client ID/key, run the private token-scope preflight, and
+stop at the activation checklist. It does not dispatch live ingestion, merge review
+gates, change public rules, or publish content. The verified local GitHub CLI is current;
+the wizard still checks the required subcommands before making any change.
 
-The initial synthesis configuration is `openai` / `gpt-5.6-terra`, 5,000 output
-tokens, and at most one summary per run. The provider key is copied browser-to-browser
-into the protected private `synthesis` environment and is never entered into the
-wizard. Private-environment secrets and variables require an eligible paid GitHub plan;
-setup stops if those controls are unavailable and never falls back to repository or
-public provider secrets. Restrict the environment to `main`. Add the curator as a
-required reviewer only when the private-repository plan supports it, and leave
-**Prevent self-review** disabled so the sole curator cannot deadlock the approval path.
-Daily mutation remains disabled until the controlled first publication passes.
+The initial synthesis configuration is `cloudflare-workers-ai` /
+`@cf/google/gemma-4-26b-a4b-it`, 5,000 output tokens, and at most one summary per run.
+The account ID is an environment variable; the API token is copied browser-to-browser
+into the protected private `synthesis` environment and never entered into the wizard.
+The one-summary activation cap is designed to stay inside Workers AI's daily free
+allocation. On Workers Free, excess requests fail; on a paid account, Cloudflare's
+billing configuration remains authoritative, so verify the account plan before the
+probe. Private-environment secrets and variables require an eligible GitHub plan; setup
+stops if those controls are unavailable and never falls back to repository or public
+provider secrets. Restrict the environment with an explicit selected-branch rule for
+`main`. Required reviewers are used only when supported, and **Prevent self-review**
+stays disabled so the sole curator cannot deadlock the approval path. Daily mutation
+remains disabled until the controlled first publication passes.
 
 ## Deployment
 
@@ -119,7 +126,7 @@ and recovery instructions are in
 ## Operating budget
 
 Discovery is free of model calls until Gate 1. One canonical structured summary powers
-every public depth. During activation the companion caps summaries at 1 per run; after
-the first production publication and observed daily cycles, the normal policy ceiling
-may return to 20. Provider-side spend limits and alerts remain the authoritative
-monthly control.
+every public depth. During activation the companion caps summaries at 1 per run and
+Workers AI supplies 10,000 free neurons per day; a Free-plan account stops further
+inference after that allocation instead of enabling paid overage. Increase the summary
+ceiling only after the first publication and several observed daily cycles.

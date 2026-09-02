@@ -26,12 +26,13 @@ read/write; every other permission is disabled. The App Client ID and private ke
 stored only in the private companion. Workflows mint a new token for one repository per
 job and request only that job’s permission subset.
 
-Provider keys exist only in the private protected `synthesis` environment. Workflow
-expressions expose exactly the key matching the explicit provider, and no hidden
-cross-provider fallback exists. The initial environment has only `OPENAI_API_KEY`;
-`ANTHROPIC_API_KEY` is an alternative, not a simultaneous fallback. Optional
-`OPENALEX_API_KEY` is a private repository secret. All provider/source keys are entered
-browser-to-browser and never through the setup wizard.
+Provider credentials exist only in the private protected `synthesis` environment. The
+initial Workers AI configuration stores `CLOUDFLARE_ACCOUNT_ID` as an environment
+variable and exactly one secret, `CLOUDFLARE_AI_API_TOKEN`. OpenAI and Anthropic remain
+code-level adapters, not simultaneous credentials or hidden fallbacks; selecting either
+later requires a reviewed workflow and environment change. Optional `OPENALEX_API_KEY`
+is a private repository secret. All provider/source keys are entered browser-to-browser
+and never through the setup wizard.
 
 Private-repository environment secrets and variables require an eligible paid GitHub
 plan. Setup fails closed when those controls are unavailable and never relocates a
@@ -45,14 +46,16 @@ stored. The App PEM is streamed by stdin to the private repository secret and is
 printed, copied, or held in a shell variable. Any legacy public
 `DEEPGENO_GITHUB_TOKEN` is removed manually only after validated cutover.
 
-Every paid synthesis is split across durable private commits. A prepared request is
+Every provider-backed synthesis is split across durable private commits. A prepared request is
 pushed first; its one-use armed state is pushed before provider dispatch; completion or
 ambiguity is pushed afterward. Git stores only the execution-token digest. Runner loss
 therefore leaves a state that cannot automatically dispatch again, and an ambiguous
 provider result requires an operator note plus compare-and-swap timestamp after
 provider-history inspection. OpenAI requests additionally carry the stable synthesis
-request ID as their provider idempotency key. Private automation also redacts the raw
-one-use token from subprocess command and captured-output diagnostics.
+request ID as their provider idempotency key when OpenAI is selected. The direct Workers
+AI endpoint has no assumed idempotency behavior, so it makes one attempt and relies on
+the durable request state. Private automation also redacts the raw one-use token from
+subprocess command and captured-output diagnostics.
 
 The private triage workflow deliberately uses `pull_request_target`, but its job is
 secret-free, checks out literal private `main`, disables credential persistence, and
@@ -80,8 +83,8 @@ public-only token and an exact-head compare-and-swap.
   bounded on transient retries.
 - No publisher scraping or unauthorized full-text mirroring occurs.
 - A fresh production build discards Astro’s generated content cache before compiling.
-- `npm run privacy` checks source and artifacts for private paths, credential patterns,
-  and exact long text from private fixtures.
+- `npm run privacy` checks source and artifacts for private paths, OpenAI, Anthropic,
+  and Cloudflare credential markers, and exact long text from private fixtures.
 - CSP, framing, MIME-sniffing, referrer, permissions, and cache headers ship in
   `apps/web/public/_headers`.
 - Production `workers.dev` remains public. Worker Preview URL Access is pending and

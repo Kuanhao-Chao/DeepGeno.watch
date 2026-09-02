@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { OpenAiStructuredModel } from "../../packages/literature/src/models/openai.js";
+import { CloudflareWorkersAiStructuredModel } from "../../packages/literature/src/models/cloudflare-workers-ai.js";
 
 import {
   assertPrivateRepository,
@@ -29,6 +29,7 @@ import {
   privateGhArguments,
   probeModelAccess,
   relevantPullRequestKind,
+  requiresCompleteSources,
   resolveAutomationRoots,
   resolveDiscoveryWindows,
   validateChangedPaths,
@@ -123,6 +124,12 @@ describe("GitHub literature workflow boundaries", () => {
     ).toEqual([{ from: "2026-08-27", through: "2026-08-27" }]);
   });
 
+  it("requires complete sources for operator runs but not scheduled recovery runs", () => {
+    expect(requiresCompleteSources("manual")).toBe(true);
+    expect(requiresCompleteSources("replay")).toBe(true);
+    expect(requiresCompleteSources("schedule")).toBe(false);
+  });
+
   it("confines mutation paths to explicitly allowed projections", () => {
     expect(
       validateChangedPaths(["data/private/batches/a.json"], ["data/private/"]),
@@ -158,6 +165,144 @@ describe("GitHub literature workflow boundaries", () => {
         ANTHROPIC_API_KEY: "wrong-key",
       }),
     ).toThrow(/OPENAI_API_KEY/);
+
+    expect(
+      validateModelEnvironment({
+        DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+        DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+        CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+        CLOUDFLARE_AI_API_TOKEN: "test-cloudflare-token",
+      }),
+    ).toEqual({
+      provider: "cloudflare-workers-ai",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      selectedKey: "CLOUDFLARE_AI_API_TOKEN",
+      accountId: "0123456789abcdef0123456789abcdef",
+      maxOutputTokens: 5000,
+    });
+  });
+
+  it("probes Workers AI with one small structured request and no paper input", async () => {
+    let request:
+      | { input: string | URL | Request; init: RequestInit | undefined }
+      | undefined;
+
+    const result = await probeModelAccess(
+      {
+        DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+        DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+        CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+        CLOUDFLARE_AI_API_TOKEN: "test-cloudflare-token",
+      },
+      {
+        fetch: async (input, init) => {
+          request = { input, init };
+          return Response.json({
+            success: true,
+            errors: [],
+            messages: [],
+            result: { response: { ok: true } },
+          });
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      provider: "cloudflare-workers-ai",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+    });
+    expect(String(request?.input)).toBe(
+      "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/google/gemma-4-26b-a4b-it",
+    );
+    expect(request?.init).toMatchObject({
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: "Bearer test-cloudflare-token",
+        "content-type": "application/json",
+      },
+      redirect: "error",
+    });
+    const body = JSON.parse(String(request?.init?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      max_tokens: 32,
+      temperature: 0,
+      stream: false,
+      store: false,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          type: "object",
+          properties: { ok: { type: "boolean", const: true } },
+          required: ["ok"],
+          additionalProperties: false,
+        },
+      },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/paper|abstract|evidence/i);
+    expect(body).not.toHaveProperty("tools");
+  });
+
+  it("accepts the selected Workers AI model's chat-completion probe response", async () => {
+    const result = await probeModelAccess(
+      {
+        DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+        DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+        CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+        CLOUDFLARE_AI_API_TOKEN: "test-cloudflare-token",
+      },
+      {
+        fetch: async () =>
+          Response.json({
+            success: true,
+            errors: [],
+            messages: [],
+            result: {
+              id: "chatcmpl_probe",
+              choices: [
+                {
+                  message: {
+                    role: "assistant",
+                    content: JSON.stringify({ ok: true }),
+                  },
+                },
+              ],
+            },
+          }),
+      },
+    );
+
+    expect(result).toEqual({
+      provider: "cloudflare-workers-ai",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+    });
+  });
+
+  it("makes one Workers AI probe attempt and sanitizes transport failures", async () => {
+    let attempts = 0;
+    const probe = probeModelAccess(
+      {
+        DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+        DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+        CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+        CLOUDFLARE_AI_API_TOKEN: "test-cloudflare-token",
+      },
+      {
+        fetch: async () => {
+          attempts += 1;
+          throw new Error("transport leaked test-cloudflare-token");
+        },
+      },
+    );
+
+    await expect(probe).rejects.toThrow(
+      "Cloudflare Workers AI access probe failed before receiving a response",
+    );
+    await expect(probe).rejects.not.toThrow("test-cloudflare-token");
+    expect(attempts).toBe(1);
   });
 
   it("probes OpenAI model access with one non-generative model retrieval", async () => {
@@ -233,7 +378,7 @@ describe("GitHub literature workflow boundaries", () => {
     ).rejects.toThrow(/supports only openai/);
   });
 
-  it("runs the private probe command without model generation or state mutation", async () => {
+  it("runs the private probe command without paper synthesis or state mutation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "deepgeno-probe-test-"));
     roots.push(root);
     const projectRoot = path.resolve(".");
@@ -273,9 +418,10 @@ describe("GitHub literature workflow boundaries", () => {
       RUNNER_TEMP: runnerRoot,
       DEEPGENO_PROJECT_ROOT: projectRoot,
       DEEPGENO_STATE_ROOT: stateRoot,
-      DEEPGENO_MODEL_PROVIDER: "openai",
-      DEEPGENO_MODEL_NAME: "gpt-5.6-terra",
-      OPENAI_API_KEY: "test-openai-key",
+      DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+      DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+      CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+      CLOUDFLARE_AI_API_TOKEN: "test-cloudflare-token",
     };
     const priorEnvironment = Object.fromEntries(
       Object.keys(environment).map((name) => [name, process.env[name]]),
@@ -285,17 +431,17 @@ describe("GitHub literature workflow boundaries", () => {
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input, init) => {
         requests.push({ input: String(input), init });
-        return new Response(
-          JSON.stringify({
-            id: "gpt-5.6-terra",
-            object: "model",
-            created: 1_787_875_200,
-            owned_by: "openai",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return Response.json({
+          success: true,
+          errors: [],
+          messages: [],
+          result: { response: { ok: true } },
+        });
       });
-    const generateSpy = vi.spyOn(OpenAiStructuredModel.prototype, "generate");
+    const generateSpy = vi.spyOn(
+      CloudflareWorkersAiStructuredModel.prototype,
+      "generate",
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
@@ -307,8 +453,9 @@ describe("GitHub literature workflow boundaries", () => {
 
       expect(requests).toHaveLength(1);
       expect(requests[0]).toMatchObject({
-        input: "https://api.openai.com/v1/models/gpt-5.6-terra",
-        init: { method: "GET" },
+        input:
+          "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/google/gemma-4-26b-a4b-it",
+        init: { method: "POST" },
       });
       expect(generateSpy).not.toHaveBeenCalled();
       expect(await readFile(markerPath, "utf8")).toBe("unchanged\n");
@@ -775,6 +922,43 @@ describe("GitHub literature workflow boundaries", () => {
 
     expect(accepted).toBe(0);
     expect(await readFile(fixture.markerPath, "utf8")).toBe("original");
+    expect(await readdir(fixture.runnerTemp)).toEqual([]);
+  });
+
+  it("promotes successful-source state during a tolerant scheduled discovery", async () => {
+    const fixture = await stagedFixture();
+    let acceptedValue = "";
+
+    const reports = await executeStagedDiscovery({
+      stateRoot: fixture.stateRoot,
+      runnerTemp: fixture.runnerTemp,
+      shadow: false,
+      requireCompleteSources: false,
+      discover: async (stagedStateRoot: string) => {
+        await writePrivateMutation(stagedStateRoot, "scheduled-partial");
+        return [
+          {
+            changedPaths: ["data/private/checkpoints/source.json"],
+            sourceIssues: [
+              {
+                source: "fixture",
+                code: "source_unavailable",
+                message: "unavailable",
+              },
+            ],
+          },
+        ];
+      },
+      accept: async () => {
+        acceptedValue = await readFile(fixture.markerPath, "utf8");
+      },
+    });
+
+    expect(reports[0]!.sourceIssues).toHaveLength(1);
+    expect(acceptedValue).toBe("scheduled-partial");
+    expect(await readFile(fixture.markerPath, "utf8")).toBe(
+      "scheduled-partial",
+    );
     expect(await readdir(fixture.runnerTemp)).toEqual([]);
   });
 

@@ -3,6 +3,12 @@
 # intentionally no default provider/model and no failover.
 activeProfile: null
 profiles:
+  cloudflare-free-activation:
+    provider: cloudflare-workers-ai
+    model: "@cf/google/gemma-4-26b-a4b-it"
+    accountIdEnv: CLOUDFLARE_ACCOUNT_ID
+    apiKeyEnv: CLOUDFLARE_AI_API_TOKEN
+    maxOutputTokens: 5000
   openai-lean:
     provider: openai
     model: REPLACE_WITH_EXPLICIT_OPENAI_MODEL_ID
@@ -14,5 +20,5 @@ profiles:
     apiKeyEnv: ANTHROPIC_API_KEY
     maxOutputTokens: 5000
 budget:
-  monthlyUsd: 15
-  maxSummariesPerRun: 20
+  dailyFreeNeurons: 10000
+  maxSummariesPerRun: 1

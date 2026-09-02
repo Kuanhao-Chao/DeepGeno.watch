@@ -1,113 +1,104 @@
 # Implementation status
 
-Last updated: 2026-08-31
+Last updated: 2026-09-02
 
-Current remote state (2026-08-31): production is served from the public
-Kuanhao-Chao/DeepGeno.watch repository through existing deepgeno-watch Worker, catalog
-empty. Private companion, curator App, synthesis environment, private preflight, and
-public-main ruleset not yet provisioned. Branch work not remotely active until
-merged/validated.
+## Live production and control-plane status
 
-## Production baseline
+- Public `Kuanhao-Chao/DeepGeno.watch` `main` is at
+  `1389302efb58dfcb5cee317110f5301dc4859b80`. The local public checkout is clean
+  and matches `origin/main`.
+- `https://deepgeno-watch.khchao.workers.dev` returns HTTP 200. Its public
+  `/catalog.json` is valid and contains zero papers.
+- The production commit has successful `verify` and
+  `Workers Builds: deepgeno-watch` checks.
+- The active public ruleset **Protect public main** requires a pull request and the
+  `verify` status check, blocks deletion and non-fast-forward updates, and grants no
+  bypass actor.
+- Private `Kuanhao-Chao/DeepGeno.watch-state` exists, is private and unarchived, and
+  has a seeded `main` at `203b0e5266f57a8281f9b6983d66aed15fda1c33`. Its
+  `engine.lock.json` still pins the current public production commit, and its tree
+  contains only the generated wrappers, lock, and private README skeleton.
+- No private GitHub Actions workflow has run. Repository variables and secrets are
+  empty. The `synthesis` environment exists but has zero variables and zero secrets.
+- The environment currently uses GitHub's **Protected branches only** policy. That is
+  not an adequate `main`-only restriction when private branch protection is unavailable;
+  activation must switch it to **Selected branches and tags** with only `main`.
+- Cloudflare Preview URL Access remains unverified. Production is public; no private
+  candidate, evidence, draft, or publication state exists yet.
 
-- Public repository `main` remains at production commit
-  `96655fe7077d0e76064e4d2d4b412d8aaacdadc3` while this work is isolated on
-  `codex/safe-production-activation`.
-- `https://deepgeno-watch.khchao.workers.dev` serves the static site and a valid empty
-  `/catalog.json` (`schemaVersion: 1.0`, zero papers).
-- The existing `deepgeno-watch` Worker, URL, asset-only `wrangler.jsonc`, build commands,
-  build variables, preview configuration, and Git connection remain intact. Preview
-  URL Access is pending and unverified; no Cloudflare mutation or live Access-policy
-  evidence was produced by this branch.
-- The remote `Kuanhao-Chao/DeepGeno.watch-state` repository does not yet exist. No App,
-  secret, environment, ruleset, live operation, or production data was created from
-  this implementation branch.
-- Public scheduled ingestion run `33430925647` (created 2026-08-31) failed safely at
-  **Confirm private repository boundary** and skipped discovery, demonstrating that no
-  private state was written publicly.
-- The production commit's `verify` and `Workers Builds: deepgeno-watch` checks remain
-  successful. The newest CI failure is isolated to Dependabot PR #4, which proposes
-  TypeScript 7/Vitest 4 and is not this activation branch. Public rulesets and legacy
-  branch protection are both still absent and remain activation work.
+## Current implementation branch
 
-## Implemented on this branch
+Work continues in the isolated worktree
+`/private/tmp/deepgeno-cloudflare-workers-ai` on
+`codex/cloudflare-workers-ai`, based on public commit `1389302`. The branch adds:
 
-- Strict public schema v2 and deterministic declassification into one validated
-  Markdown projection with anonymous review time and remapped public evidence IDs.
-- Positive exclusion of private identifiers, raw evidence/abstracts, reviewer identity,
-  prompts/model output, provider request IDs, token use, and private Git provenance.
-- Explicit public project and private state roots, with GitHub Actions requiring the
-  `--state-root` CLI flag and private-bound state writers.
-- Immutable private publication records, sealed exact public bytes/digests, and a
-  concurrency-safe delivery outbox with `pending`, `pr-open`, `merged`, and `failed`
-  states.
-- Idempotent one-file public pull-request delivery with exact-head GraphQL CAS,
-  reconciliation after ambiguous failures, remote identity/mode validation, direct-main
-  refusal, and trusted public CI scope enforcement.
-- An allowlisted private companion template with four workflow/action wrappers. Each
-  operation checks out trusted private `main`, bootstraps a literal public engine pin,
-  uses explicit roots, and mints one-repository GitHub App tokens.
-- A fail-closed companion renderer that preserves private runtime state, detects static
-  and lock drift, supports confirmed lock-only repins, and rejects symlink/special-path
-  ambiguity.
-- An eight-stage `scripts/setup-private-ops.sh` with a canonical wizard library,
-  pre-mutation `gh` capability checks, exact repository validation, confirmed seed and
-  App boundaries, browser-only provider keys, PEM stdin streaming, and a scoped
-  preflight run. It is statically tested and is not run automatically.
-- Durable paid-call requests that push `prepared` and one-use `armed` states before
-  dispatch, mark uncertain outcomes `ambiguous`, require explicit timestamp-guarded
-  reconciliation, and pass a stable OpenAI idempotency key.
-- A protected non-generative model-access probe and a private controlled-scan compiler
-  that validates the approved 1/9/4 decision counts, defers unknown candidates, and
-  stops if the selected paper is absent without publishing the private decision list.
-- One canonical public-paper schema shared by contracts and Astro, with YAML date
-  adaptation isolated at the content-loader boundary and consistent Evidence Reference
-  terminology.
-- Updated architecture, operations, security, Cloudflare, and companion documentation,
-  plus ADR 0003 for the two-repository topology.
+- a direct Cloudflare Workers AI structured-model adapter with explicit account,
+  token, and model configuration; Draft-07 JSON Schema output; deterministic sampling;
+  a 120-second deadline; sanitized failures; and no automatic retry;
+- the initial free-allocation profile
+  `cloudflare-workers-ai/@cf/google/gemma-4-26b-a4b-it`, capped at 5,000 output tokens
+  and one summary per activation run;
+- a small paper-free structured access probe that performs no private-state write;
+- strict source completeness for manual and replay discovery, with explicit
+  successful-source promotion for scheduled overlap recovery;
+- an allowlisted `--sync-static` renderer path that updates generated private wrappers
+  and optionally repins the public engine without changing private runtime state;
+- Cloudflare-only private workflow wiring, browser-guided token/account setup, detailed
+  Preview Access steps, and a privacy marker for `CLOUDFLARE_AI_API_TOKEN`.
 
-## Verified during branch development
+The OpenAI and Anthropic adapters remain available in the public engine, but the
+generated private workflow does not expose their credentials or silently fall back to
+them.
 
-- Focused contract, lifecycle, publication, delivery, workflow, renderer, and wizard
-  tests pass after test-first failure demonstrations.
-- The full TypeScript/Vitest suite, Astro/type checks, production build, static artifact
-  validation, privacy scan, YAML and embedded-shell parsing, Wrangler dry run, format,
-  and diff hygiene are rerun at each completed phase.
-- Independent scoped review found and closed workflow trust, immutable replay, receipt
-  binding, Git endpoint, exact-CAS, renderer drift, setup-node, and token-permission
-  defects before this status was recorded.
+## Verification completed at this checkpoint
+
+- `npm run check` passed end to end: all workspace typechecks, 20 test files with 217
+  tests, Astro production build, 11-file static artifact validation, 26-file privacy
+  scan, and a Wrangler 4.127.0 dry run over 30 static assets with no bindings.
+- `npm run format:check`, `git diff --check`, and
+  `bash -n scripts/setup-private-ops.sh` passed. ShellCheck is not installed locally.
+- The new privacy-marker and Workers AI chat-response tests were each observed failing
+  for the intended missing behavior before their minimal fixes, then passed.
+- Live read-only verification confirmed the repository, environment, ruleset, checks,
+  Worker response, and zero-paper production catalog facts listed above.
+
+The final whole-branch requirements review remains before integration.
 
 ## Activation remaining
 
-1. Complete the whole-branch verification and independent review, then merge through a
-   normal public pull request with `CI / verify` green.
-2. Upgrade the local GitHub CLI from 0.11.0 and run
-   `./scripts/setup-private-ops.sh` from a clean public-main standard clone. The wizard
-   provisions only after explicit confirmations.
-3. Confirm the private companion, eligible private-environment secret/variable support,
-   `main`-restricted synthesis environment, exact two-repository App installation, and
-   private preflight. Keep
+1. Finish documentation/configuration, run the complete verification suite, and review
+   the whole branch against the approved activation plan.
+2. Commit and push the implementation branch, open a public pull request, require green
+   `CI / verify`, merge it normally, and confirm the connected Cloudflare build deploys
+   that exact public-main commit.
+3. Run `./scripts/setup-private-ops.sh` from the clean updated public checkout. It will
+   sync the eight wrappers, repin the companion, configure the repository/environment,
+   guide the curator App setup, and run private preflight.
+4. In the private `synthesis` environment, use an explicit selected-branch rule for
+   `main`; add the four Workers AI variables and exactly one
+   `CLOUDFLARE_AI_API_TOKEN` secret. Keep
    `DEEPGENO_LIVE_INGESTION_ENABLED=false`.
-4. Add the public pull-request-only ruleset requiring `CI / verify`, with no App bypass.
-   Do not require the conditional Cloudflare check universally.
-5. Commit the approved decision manifest only to the private companion, probe the
-   selected model without summary generation, run the approved fixed-date discovery,
-   and require zero source issues. Compile the Gate 1 body with the strict 1/9/4 plan;
-   if the selected paper is absent, stop.
-6. Carry only the approved paper through private Gate 1. Before Gate 2 can create the
-   first public delivery PR, explicitly enable Cloudflare Access for Worker Preview URLs
-   and verify the intended reviewer can enter while an unauthenticated request is denied.
-7. Approve Gate 2, create the one-file public PR, and wait for human merge. Verify
-   production catalog growth from zero to one. Enable scheduled private ingestion only
-   after that publication succeeds.
+5. Enable Preview URL Access for **Previews only** and verify signed-in curator access
+   plus unauthenticated denial.
+6. Run the small model probe, then a strict shadow discovery covering 2026-09-01 through
+   2026-09-02. Require zero source issues before repeating the same window live.
+7. Triage every Gate 1 Candidate through the GitHub web UI or terminal, select at most
+   one paper for synthesis, and merge as the configured curator. Review the resulting
+   Gate 2 Draft Summary and approve, revise, or dismiss it.
+8. For approval, verify the generated public pull request changes exactly one paper
+   Markdown file, merge it after CI, confirm the production catalog grows from zero to
+   one, and only then enable scheduled live ingestion.
 
 ## Known provisioning limits
 
+Private-repository environment secrets and variables require an eligible GitHub plan.
+If GitHub does not expose those controls, activation stops; credentials are never moved
+to a repository-level or public secret as an implicit workaround.
+
 The renderer supports a standard clone on one filesystem and a single trusted local
 operator. Linked-worktree `.git` files are rejected. Cross-filesystem atomic moves,
-hardlinks, and hostile concurrent path replacement are not supported. These limits do
-not weaken the repository/runtime boundary, but operators must use the documented
-canonical sibling clone rather than a shared or adversarial filesystem.
+hardlinks, and hostile concurrent path replacement are outside the supported setup
+model.
 
 Weekly email digests, author/repository tracking, semantic search, citation/version
 alerts, and curator analytics remain post-activation extensions.

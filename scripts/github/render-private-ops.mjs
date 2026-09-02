@@ -49,6 +49,7 @@ export async function renderPrivateOps({
   commit,
   repository = PUBLIC_ENGINE_REPOSITORY,
   repin = false,
+  syncStatic = false,
 }) {
   if (typeof destination !== "string" || destination.trim() === "") {
     throw new Error("--destination must name the companion repository root");
@@ -94,7 +95,15 @@ export async function renderPrivateOps({
   const existingStatic = tree.files.filter((file) =>
     PRIVATE_OPS_FILES.includes(file),
   );
-  await assertStaticTemplateMatches(destinationRoot, existingStatic);
+  const driftedStatic = await findStaticTemplateDrift(
+    destinationRoot,
+    existingStatic,
+  );
+  if (driftedStatic.length > 0 && !syncStatic) {
+    throw new Error(
+      `Static template drift: ${driftedStatic[0]} differs from the template`,
+    );
+  }
 
   const lockPath = path.join(destinationRoot, "engine.lock.json");
   const desiredBytes = lockBytes(commit);
@@ -124,6 +133,9 @@ export async function renderPrivateOps({
     (relative) => !existingStatic.includes(relative),
   );
   await copyStaticTemplate(destinationRoot, missingStatic);
+  if (syncStatic) {
+    await replaceStaticTemplate(destinationRoot, driftedStatic);
+  }
 
   if (!current) {
     await createFileAtomic(lockPath, desiredBytes, destinationRoot);
@@ -132,6 +144,7 @@ export async function renderPrivateOps({
       repository,
       commit,
       repinned: false,
+      synced: driftedStatic.length > 0,
     };
   }
   if (current.commit === commit) {
@@ -140,10 +153,17 @@ export async function renderPrivateOps({
       repository,
       commit,
       repinned: false,
+      synced: driftedStatic.length > 0,
     };
   }
   await replaceFileAtomic(lockPath, desiredBytes, destinationRoot);
-  return { destination: destinationRoot, repository, commit, repinned: true };
+  return {
+    destination: destinationRoot,
+    repository,
+    commit,
+    repinned: true,
+    synced: driftedStatic.length > 0,
+  };
 }
 
 function validateRepository(repository) {
@@ -215,7 +235,8 @@ async function copyStaticTemplate(destinationRoot, missingStatic) {
   }
 }
 
-async function assertStaticTemplateMatches(destinationRoot, existingStatic) {
+async function findStaticTemplateDrift(destinationRoot, existingStatic) {
+  const drifted = [];
   for (const relative of existingStatic) {
     const target = path.join(destinationRoot, relative);
     const stat = await lstat(target);
@@ -232,10 +253,18 @@ async function assertStaticTemplateMatches(destinationRoot, existingStatic) {
       readFile(target),
     ]);
     if (!expected.equals(actual)) {
-      throw new Error(
-        `Static template drift: ${relative} differs from the template`,
-      );
+      drifted.push(relative);
     }
+  }
+  return drifted;
+}
+
+async function replaceStaticTemplate(destinationRoot, driftedStatic) {
+  for (const relative of driftedStatic) {
+    const source = path.join(templateRoot, relative);
+    const target = path.join(destinationRoot, relative);
+    const bytes = await readFile(source);
+    await replaceFileAtomic(target, bytes, destinationRoot);
   }
 }
 
@@ -383,6 +412,7 @@ function parseArguments(args) {
     commit: undefined,
     repository: PUBLIC_ENGINE_REPOSITORY,
     repin: false,
+    syncStatic: false,
   };
   const seen = new Set();
   for (let index = 0; index < args.length; index += 1) {
@@ -392,6 +422,13 @@ function parseArguments(args) {
         throw new Error("--repin may be supplied only once");
       seen.add(argument);
       options.repin = true;
+      continue;
+    }
+    if (argument === "--sync-static") {
+      if (seen.has(argument))
+        throw new Error("--sync-static may be supplied only once");
+      seen.add(argument);
+      options.syncStatic = true;
       continue;
     }
     if (!["--destination", "--commit", "--repository"].includes(argument)) {
@@ -416,7 +453,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === modulePath) {
       parseArguments(process.argv.slice(2)),
     );
     process.stdout.write(
-      `${result.repinned ? "Repinned" : "Rendered"} private operations at ${result.destination}\n`,
+      `${result.repinned ? "Repinned" : result.synced ? "Synced" : "Rendered"} private operations at ${result.destination}\n`,
     );
   } catch (error) {
     process.stderr.write(

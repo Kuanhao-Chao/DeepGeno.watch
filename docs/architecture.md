@@ -63,10 +63,11 @@ that pinned code.
 - Canonical identity prefers normalized DOI, then accession, then a stable content
   fingerprint; repeated source records upsert rather than duplicate.
 - No model runs before a Gate 1 `summarize` decision.
-- Each paid synthesis has one stable request ID derived from its immutable draft target.
+- Each provider-backed synthesis has one stable request ID derived from its immutable draft target.
   Private Git persists `prepared`, then one-use `armed` state before dispatch. The raw
-  execution token is never persisted, while OpenAI receives the stable request ID as
-  its idempotency key.
+  execution token is never persisted. OpenAI receives the stable request ID as its
+  idempotency key when selected; direct Workers AI calls make one attempt and rely on
+  the durable private request state.
 - A runner loss or provider uncertainty leaves the request `armed`, `dispatching`, or
   `ambiguous`; all automatic retries fail closed until a curator records an explicit,
   timestamp-guarded reconciliation after checking provider history.
@@ -96,9 +97,11 @@ are never persisted.
 Provider credentials remain environment-scoped in the private companion, which
 requires an eligible paid GitHub plan for private-repository environment secrets and
 variables. There is no repository-level or public-secret fallback. `synthesis` accepts
-only `main`; required-reviewer protection is used when the plan supports it, while
+only an explicitly selected `main` branch rule; “protected branches only” is not used
+as a substitute. Required-reviewer protection is used when the plan supports it, while
 Prevent self-review stays disabled so the single curator retains a viable approval
-path.
+path. The initial provider is Cloudflare Workers AI through its direct REST endpoint,
+because synthesis executes in GitHub Actions rather than in the public Worker.
 
 Public `main` requires a pull request and `CI / verify`, without an App bypass. The
 existing `deepgeno-watch` Worker watches only the public repository and deploys human-
@@ -124,13 +127,16 @@ abstract-only.
 ## Failure model
 
 A malformed record or unavailable enrichment endpoint is quarantined and reported
-without erasing successful records. Non-shadow discovery with any source issue stops
-before state mutation or Gate 1; shadow runs may report partial coverage without
-mutation. Outbound clients pace hosts and bound transient/429 retries. Provider errors
-never trigger hidden failover or automatic paid-call replay. Invalid synthesis stays
-private and retryable only through the recorded reconciliation protocol. Storage
-corruption, root ambiguity, divergent sealed bytes, and delivery scope conflicts fail
-closed because partial gate transitions are unsafe.
+without erasing successful records. Shadow discovery reports partial coverage without
+promotion, so the activation runbook requires an explicit zero-warning review. Manual
+and replay live discovery fail closed on any source issue before state promotion or
+Gate 1. Scheduled discovery may promote successful-source state while reporting issue
+counts; overlapping later windows revisit the missed source interval. Outbound clients
+pace hosts and bound transient/429 retries. Provider errors never trigger hidden
+failover or automatic provider-call replay. Invalid synthesis stays private and
+retryable only through the recorded reconciliation protocol. Storage corruption, root
+ambiguity, divergent sealed bytes, and delivery scope conflicts fail closed because
+partial gate transitions are unsafe.
 
 The companion renderer itself assumes a standard clone on one filesystem and one
 trusted operator. It rejects linked-worktree `.git` files and symlinks; cross-filesystem

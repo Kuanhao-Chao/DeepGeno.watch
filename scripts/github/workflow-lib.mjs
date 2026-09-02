@@ -245,13 +245,16 @@ export function privateGhArguments(repository, args) {
 
 /**
  * Runs discovery against a disposable private-state copy. A clean non-shadow
- * result is promoted atomically by allowlisted path before Gate 1 side effects;
- * shadow results and partial-source results never touch the real state root.
+ * result is promoted atomically by allowlisted path before Gate 1 side effects.
+ * Shadow results never touch the real state root. Operator runs require complete
+ * sources by default; scheduled runs may explicitly promote successful-source
+ * state so overlap recovery can revisit transient misses.
  */
 export async function executeStagedDiscovery({
   stateRoot,
   runnerTemp,
   shadow,
+  requireCompleteSources = true,
   discover,
   accept,
 }) {
@@ -272,7 +275,7 @@ export async function executeStagedDiscovery({
       return count + report.sourceIssues.length;
     }, 0);
     if (shadow) return reports;
-    if (sourceIssueCount > 0) {
+    if (requireCompleteSources && sourceIssueCount > 0) {
       throw new Error(
         `Non-shadow discovery stopped because ${sourceIssueCount} source issue(s) were reported`,
       );
@@ -287,6 +290,13 @@ export async function executeStagedDiscovery({
   } finally {
     await removeStagedRoot(temporaryParent, stagedStateRoot);
   }
+}
+
+export function requiresCompleteSources(trigger) {
+  if (!new Set(["schedule", "manual", "replay"]).has(trigger)) {
+    throw new Error(`Unknown discovery trigger: ${String(trigger)}`);
+  }
+  return trigger !== "schedule";
 }
 
 export async function executeApprovedPublication({
@@ -506,15 +516,23 @@ export function validateRelativePath(value) {
 export function validateModelEnvironment(environment) {
   const provider = environment.DEEPGENO_MODEL_PROVIDER;
   const model = environment.DEEPGENO_MODEL_NAME?.trim();
-  if (provider !== "openai" && provider !== "anthropic") {
+  if (
+    provider !== "openai" &&
+    provider !== "anthropic" &&
+    provider !== "cloudflare-workers-ai"
+  ) {
     throw new Error(
-      "DEEPGENO_MODEL_PROVIDER must be explicitly set to openai or anthropic",
+      "DEEPGENO_MODEL_PROVIDER must be explicitly set to openai, anthropic, or cloudflare-workers-ai",
     );
   }
   if (!model)
     throw new Error("DEEPGENO_MODEL_NAME must be explicitly configured");
   const selectedKey =
-    provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+    provider === "openai"
+      ? "OPENAI_API_KEY"
+      : provider === "anthropic"
+        ? "ANTHROPIC_API_KEY"
+        : "CLOUDFLARE_AI_API_TOKEN";
   if (!environment[selectedKey]?.trim()) {
     throw new Error(`${selectedKey} is required for the selected provider`);
   }
@@ -524,6 +542,25 @@ export function validateModelEnvironment(environment) {
     512,
     20_000,
   );
+  if (provider === "cloudflare-workers-ai") {
+    const accountId = environment.CLOUDFLARE_ACCOUNT_ID?.trim();
+    if (!accountId) {
+      throw new Error(
+        "CLOUDFLARE_ACCOUNT_ID is required for the selected provider",
+      );
+    }
+    if (!/^[a-f0-9]{32}$/i.test(accountId)) {
+      throw new Error(
+        "CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID",
+      );
+    }
+    if (!/^@cf\/[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(model)) {
+      throw new Error(
+        "Cloudflare Workers AI requires an explicit @cf/provider/model name",
+      );
+    }
+    return { provider, model, selectedKey, accountId, maxOutputTokens };
+  }
   return { provider, model, selectedKey, maxOutputTokens };
 }
 
@@ -532,13 +569,111 @@ export async function probeModelAccess(
   { fetch: fetchImpl = globalThis.fetch } = {},
 ) {
   const configuration = validateModelEnvironment(environment);
-  if (configuration.provider !== "openai") {
-    throw new Error("Model access probing currently supports only openai");
-  }
   if (typeof fetchImpl !== "function") {
     throw new Error("Model access probing requires fetch");
   }
   const apiKey = environment[configuration.selectedKey].trim();
+  if (configuration.provider === "cloudflare-workers-ai") {
+    let response;
+    try {
+      response = await fetchImpl(
+        `https://api.cloudflare.com/client/v4/accounts/${configuration.accountId}/ai/run/${configuration.model}`,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${apiKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            messages: [
+              {
+                role: "system",
+                content: "Return the requested access-check object exactly.",
+              },
+              { role: "user", content: "Return JSON with ok set to true." },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                type: "object",
+                properties: { ok: { type: "boolean", const: true } },
+                required: ["ok"],
+                additionalProperties: false,
+              },
+            },
+            max_tokens: 32,
+            temperature: 0,
+            stream: false,
+            store: false,
+          }),
+          redirect: "error",
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+    } catch {
+      throw new Error(
+        "Cloudflare Workers AI access probe failed before receiving a response",
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        `Cloudflare Workers AI access probe failed with HTTP ${String(response.status)}`,
+      );
+    }
+    let envelope;
+    try {
+      envelope = await response.json();
+    } catch {
+      throw new Error(
+        "Cloudflare Workers AI access probe returned an invalid response",
+      );
+    }
+    if (
+      !isObjectRecord(envelope) ||
+      envelope.success !== true ||
+      !isObjectRecord(envelope.result)
+    ) {
+      throw new Error(
+        "Cloudflare Workers AI access probe returned an invalid response",
+      );
+    }
+    let output = envelope.result.response;
+    if (output === undefined) {
+      const firstChoice = Array.isArray(envelope.result.choices)
+        ? envelope.result.choices[0]
+        : undefined;
+      if (
+        isObjectRecord(firstChoice) &&
+        isObjectRecord(firstChoice.message) &&
+        typeof firstChoice.message.content === "string"
+      ) {
+        output = firstChoice.message.content;
+      }
+    }
+    if (typeof output === "string") {
+      try {
+        output = JSON.parse(output);
+      } catch {
+        throw new Error(
+          "Cloudflare Workers AI access probe returned an invalid response",
+        );
+      }
+    }
+    if (
+      !isObjectRecord(output) ||
+      output.ok !== true ||
+      Object.keys(output).length !== 1
+    ) {
+      throw new Error(
+        "Cloudflare Workers AI access probe returned an invalid response",
+      );
+    }
+    return { provider: configuration.provider, model: configuration.model };
+  }
+  if (configuration.provider !== "openai") {
+    throw new Error("Model access probing currently supports only openai");
+  }
   const response = await fetchImpl(
     `https://api.openai.com/v1/models/${encodeURIComponent(configuration.model)}`,
     {
@@ -567,6 +702,10 @@ export async function probeModelAccess(
     throw new Error("OpenAI model access probe returned an unexpected model");
   }
   return { provider: configuration.provider, model: configuration.model };
+}
+
+function isObjectRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function validateSelectedPaperLimit(paperIds, configuredLimit = "20") {

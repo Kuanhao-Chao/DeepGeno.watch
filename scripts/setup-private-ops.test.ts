@@ -39,6 +39,7 @@ const repositoryVariables = [
 ];
 
 const synthesisVariables = [
+  "CLOUDFLARE_ACCOUNT_ID",
   "DEEPGENO_MODEL_MAX_OUTPUT_TOKENS",
   "DEEPGENO_MODEL_NAME",
   "DEEPGENO_MODEL_PROVIDER",
@@ -49,7 +50,7 @@ const repositorySecrets = [
   "OPENALEX_API_KEY",
 ];
 
-const synthesisSecrets = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
+const synthesisSecrets = ["CLOUDFLARE_AI_API_TOKEN"];
 
 describe("private companion setup wizard", () => {
   it("preserves the canonical library and defines eight syntactically valid stages", async () => {
@@ -226,11 +227,11 @@ describe("private companion setup wizard", () => {
     expect(stages).toMatch(
       /node scripts\/github\/render-private-ops\.mjs\s+\\\n\s+--destination "\$STATE_ROOT"\s+\\\n\s+--repository Kuanhao-Chao\/DeepGeno\.watch\s+\\\n\s+--commit "\$PIN"/,
     );
-    expect(stages).toContain('--commit "$PIN" --repin');
+    expect(stages).toContain('--commit "$PIN" --sync-static --repin');
     const repinConditional = stages.indexOf(
       'if [[ "$CURRENT_PIN" != "$PIN" ]]; then',
     );
-    const repinCall = stages.indexOf("    render_repin", repinConditional);
+    const repinCall = stages.indexOf("    render_sync_repin", repinConditional);
     const repinConfirmation = stages.indexOf("    confirm ", repinConditional);
     expect(repinConditional).toBeGreaterThan(0);
     expect(repinConfirmation).toBeGreaterThan(repinConditional);
@@ -241,19 +242,46 @@ describe("private companion setup wizard", () => {
         repinCall,
       ),
     ).toBeGreaterThan(repinConfirmation);
-    const repinBranch = stages.slice(
+    const existingCompanionBranch = stages.slice(
       repinConditional,
-      stages.indexOf("  else", repinCall),
+      stages.indexOf("else\n  git -C", repinCall),
     );
-    expect(repinBranch).toMatch(
-      /git -C "\$STATE_ROOT" push origin HEAD:main[\s\S]+render_pin[\s\S]+same-pin repin verification must be a clean no-op/,
+    expect(existingCompanionBranch).toMatch(
+      /render_sync_repin[\s\S]+is_allowlisted_static_sync_status/,
+    );
+    expect(existingCompanionBranch).toMatch(
+      /git -C "\$STATE_ROOT" add -- "\$\{SEED_PATHS\[@\]\}"[\s\S]+git -C "\$STATE_ROOT" push origin HEAD:main[\s\S]+render_pin[\s\S]+same-pin wrapper verification must be a clean no-op/,
     );
 
     expect(parseBashArray(stages, "SEED_PATHS")).toEqual(expectedSeedPaths);
     expect(stages).toContain('git -C "$STATE_ROOT" add -- "${SEED_PATHS[@]}"');
-    expect(stages).toContain('git -C "$STATE_ROOT" add -- engine.lock.json');
     expect(stages).toContain('git -C "$STATE_ROOT" push origin HEAD:main');
     expect(stages).not.toMatch(/git[^\n]*push[^\n]*(?:--force|-f(?:\s|$))/);
+
+    expect(
+      runBashFunction(stages, "is_allowlisted_static_sync_status", [
+        " M README.md\n M engine.lock.json",
+        "true",
+      ]).status,
+    ).toBe(0);
+    expect(
+      runBashFunction(stages, "is_allowlisted_static_sync_status", [
+        "?? .github/workflows/summarize.yml\n M README.md",
+        "false",
+      ]).status,
+    ).toBe(0);
+    expect(
+      runBashFunction(stages, "is_allowlisted_static_sync_status", [
+        "?? engine.lock.json",
+        "true",
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      runBashFunction(stages, "is_allowlisted_static_sync_status", [
+        " M data/private/checkpoints/source.json",
+        "false",
+      ]).status,
+    ).not.toBe(0);
 
     const headBranch = stages.indexOf(
       'if git -C "$STATE_ROOT" rev-parse --verify HEAD',
@@ -391,14 +419,15 @@ describe("private companion setup wizard", () => {
       'gh secret set DEEPGENO_PUBLIC_APP_PRIVATE_KEY --repo "$STATE_REPOSITORY" < "$PEM_PATH"',
     );
     expect(stages).not.toMatch(
-      /gh secret set (?:OPENAI_API_KEY|ANTHROPIC_API_KEY|OPENALEX_API_KEY)/,
+      /gh secret set (?:CLOUDFLARE_AI_API_TOKEN|OPENALEX_API_KEY)/,
     );
-    expect(stages).toContain("OPENAI_API_KEY");
-    expect(stages).toContain("ANTHROPIC_API_KEY");
+    expect(stages).toContain("CLOUDFLARE_AI_API_TOKEN");
+    expect(stages).not.toContain("OPENAI_API_KEY");
+    expect(stages).not.toContain("ANTHROPIC_API_KEY");
     expect(stages).toContain("OPENALEX_API_KEY");
     expect(stages).toContain("browser-to-browser");
     expect(stages).toContain(
-      '[[ "$SYNTHESIS_SECRET_NAMES" == "OPENAI_API_KEY" ]]',
+      '[[ "$SYNTHESIS_SECRET_NAMES" == "CLOUDFLARE_AI_API_TOKEN" ]]',
     );
   });
 
@@ -431,9 +460,7 @@ describe("private companion setup wizard", () => {
     expect(stages).toContain(
       'gh secret list --env synthesis --repo "$STATE_REPOSITORY"',
     );
-    expect(stages).not.toMatch(
-      /gh secret set (?:OPENAI_API_KEY|ANTHROPIC_API_KEY)(?:\s|$)/,
-    );
+    expect(stages).not.toMatch(/gh secret set CLOUDFLARE_AI_API_TOKEN(?:\s|$)/);
     expect(stages).not.toMatch(/^\s*gh api[^\n]*(?:account plan|billing)/im);
   });
 
@@ -541,7 +568,7 @@ describe("private companion setup wizard", () => {
     expect(stages).toContain("CI / verify");
     expect(stages).toContain("DEEPGENO_GITHUB_TOKEN");
     expect(stages).toContain("GitHub Settings");
-    expect(stages).toContain("Task 5");
+    expect(stages).toContain("operations runbook");
     expect(stages).not.toMatch(/^\s*gh secret delete\b/m);
   });
 

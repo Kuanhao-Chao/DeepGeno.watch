@@ -288,33 +288,34 @@ describe("private operations companion template", () => {
   it("keeps synthesis credentials in protected synthesis jobs and delivery tokens transient", async () => {
     const summarize = await template(".github/workflows/summarize.yml");
     const jobBlocks = workflowJobBlocks(summarize);
-    const providerBlocks = jobBlocks.filter(
-      (block) =>
-        block.includes("OPENAI_API_KEY") || block.includes("ANTHROPIC_API_KEY"),
+    const providerBlocks = jobBlocks.filter((block) =>
+      block.includes("CLOUDFLARE_AI_API_TOKEN"),
     );
 
     expect(providerBlocks).toHaveLength(4);
     for (const block of providerBlocks) {
       expect(block).toContain("environment: synthesis");
       expect(block).toContain(
-        "OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}",
+        "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
       );
       expect(block).toContain(
-        "ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}",
+        "CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}",
       );
     }
     for (const block of jobBlocks.filter(
       (block) => !block.includes("environment: synthesis"),
     )) {
-      expect(block).not.toContain("OPENAI_API_KEY");
-      expect(block).not.toContain("ANTHROPIC_API_KEY");
+      expect(block).not.toContain("CLOUDFLARE_ACCOUNT_ID");
+      expect(block).not.toContain("CLOUDFLARE_AI_API_TOKEN");
     }
+    expect(summarize).not.toContain("OPENAI_API_KEY");
+    expect(summarize).not.toContain("ANTHROPIC_API_KEY");
     expect(occurrences(summarize, "DEEPGENO_CURATOR_GITHUB_LOGIN:")).toBe(2);
     expect(occurrences(summarize, "DEEPGENO_PUBLIC_GITHUB_TOKEN:")).toBe(1);
     expect(occurrences(summarize, "GH_TOKEN:")).toBe(3);
   });
 
-  it("dispatches a protected read-only model probe separately from synthesis", async () => {
+  it("dispatches a protected paper-free model probe separately from synthesis", async () => {
     const summarize = await template(".github/workflows/summarize.yml");
     const workflow = parseYaml(summarize);
     const dispatch = workflow.on.workflow_dispatch;
@@ -343,7 +344,7 @@ describe("private operations companion template", () => {
           }),
         }),
         expect.objectContaining({
-          name: "Probe configured model access without generation",
+          name: "Probe configured model access without paper data",
           run: 'node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" probe-model',
         }),
       ]),
@@ -370,6 +371,7 @@ describe("private operations companion template", () => {
     const secrets = references(workflowText, /secrets\.([A-Z0-9_]+)/g);
 
     expect(variables).toEqual([
+      "CLOUDFLARE_ACCOUNT_ID",
       "CROSSREF_MAILTO",
       "DEEPGENO_CURATOR_GITHUB_LOGIN",
       "DEEPGENO_LIVE_INGESTION_ENABLED",
@@ -381,15 +383,15 @@ describe("private operations companion template", () => {
       "DEEPGENO_PUBLIC_REPOSITORY",
     ]);
     expect(secrets).toEqual([
-      "ANTHROPIC_API_KEY",
+      "CLOUDFLARE_AI_API_TOKEN",
       "DEEPGENO_PUBLIC_APP_PRIVATE_KEY",
-      "OPENAI_API_KEY",
       "OPENALEX_API_KEY",
     ]);
     for (const name of [...variables, ...secrets]) {
       expect(readme, name).toContain(name);
     }
-    expect(readme).toContain("exactly one of");
+    expect(readme).not.toContain("OPENAI_API_KEY");
+    expect(readme).not.toContain("ANTHROPIC_API_KEY");
     expect(readme).toContain("synthesis");
   });
 

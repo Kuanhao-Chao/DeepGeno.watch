@@ -2,7 +2,12 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { main, resolveCliRoots, resolvePublicDeliveryConfig } from "./cli.js";
+import {
+  configuredModel,
+  main,
+  resolveCliRoots,
+  resolvePublicDeliveryConfig,
+} from "./cli.js";
 import { GitFileStateStore } from "./store.js";
 import { renderCandidateReview } from "./review.js";
 import { createLiteratureLifecycle } from "./lifecycle.js";
@@ -18,6 +23,21 @@ afterEach(async () => {
 });
 
 describe("literature CLI roots", () => {
+  it("constructs the explicitly configured Cloudflare Workers AI model", () => {
+    const model = configuredModel({
+      DEEPGENO_MODEL_PROVIDER: "cloudflare-workers-ai",
+      DEEPGENO_MODEL_NAME: "@cf/google/gemma-4-26b-a4b-it",
+      DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: "5000",
+      CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+      CLOUDFLARE_AI_API_TOKEN: "private-cloudflare-token",
+    });
+
+    expect(model).toMatchObject({
+      provider: "cloudflare-workers-ai",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+    });
+  });
+
   it("resolves each new CLI root ahead of its environment variable", () => {
     expect(
       resolveCliRoots("publish", {
