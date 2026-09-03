@@ -7,6 +7,7 @@ import { loadPipelineConfig } from "./config.js";
 import { AllowlistedHttpClient } from "./http.js";
 import { createLiteratureLifecycle } from "./lifecycle.js";
 import { AnthropicStructuredModel } from "./models/anthropic.js";
+import { CloudflareWorkersAiStructuredModel } from "./models/cloudflare-workers-ai.js";
 import { OpenAiStructuredModel } from "./models/openai.js";
 import type {
   LiteratureSource,
@@ -410,13 +411,17 @@ function triggerFlag(
   return trigger as "schedule" | "manual" | "replay" | "test";
 }
 
-function configuredModel(): StructuredModel {
-  const provider = process.env.DEEPGENO_MODEL_PROVIDER;
-  const model = process.env.DEEPGENO_MODEL_NAME;
+export function configuredModel(
+  environment: NodeJS.ProcessEnv = process.env,
+): StructuredModel {
+  const provider = environment.DEEPGENO_MODEL_PROVIDER;
+  const model = environment.DEEPGENO_MODEL_NAME;
   invariant(
-    provider === "openai" || provider === "anthropic",
+    provider === "openai" ||
+      provider === "anthropic" ||
+      provider === "cloudflare-workers-ai",
     "model_provider_required",
-    "DEEPGENO_MODEL_PROVIDER must be openai or anthropic",
+    "DEEPGENO_MODEL_PROVIDER must be openai, anthropic, or cloudflare-workers-ai",
   );
   invariant(
     model,
@@ -424,7 +429,7 @@ function configuredModel(): StructuredModel {
     "DEEPGENO_MODEL_NAME must be configured explicitly",
   );
   const maxOutputTokens = Number(
-    process.env.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS ?? "5000",
+    environment.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS ?? "5000",
   );
   invariant(
     Number.isInteger(maxOutputTokens) &&
@@ -435,24 +440,42 @@ function configuredModel(): StructuredModel {
   );
   if (provider === "openai") {
     invariant(
-      process.env.OPENAI_API_KEY,
+      environment.OPENAI_API_KEY,
       "model_key_required",
       "OPENAI_API_KEY is required for the selected provider",
     );
     return new OpenAiStructuredModel({
       model,
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: environment.OPENAI_API_KEY,
+      maxOutputTokens,
+    });
+  }
+  if (provider === "cloudflare-workers-ai") {
+    invariant(
+      environment.CLOUDFLARE_ACCOUNT_ID,
+      "cloudflare_account_id_required",
+      "CLOUDFLARE_ACCOUNT_ID is required for the selected provider",
+    );
+    invariant(
+      environment.CLOUDFLARE_AI_API_TOKEN,
+      "model_key_required",
+      "CLOUDFLARE_AI_API_TOKEN is required for the selected provider",
+    );
+    return new CloudflareWorkersAiStructuredModel({
+      accountId: environment.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: environment.CLOUDFLARE_AI_API_TOKEN,
+      model,
       maxOutputTokens,
     });
   }
   invariant(
-    process.env.ANTHROPIC_API_KEY,
+    environment.ANTHROPIC_API_KEY,
     "model_key_required",
     "ANTHROPIC_API_KEY is required for the selected provider",
   );
   return new AnthropicStructuredModel({
     model,
-    apiKey: process.env.ANTHROPIC_API_KEY,
+    apiKey: environment.ANTHROPIC_API_KEY,
     maxTokens: maxOutputTokens,
   });
 }

@@ -49,8 +49,10 @@ engine-only changes may legitimately miss the build-watch include list.
 Keep non-production public branch previews enabled. Preview URL Access is currently
 pending and unverified because this branch made no Cloudflare mutation and captured no
 live Access-policy evidence. During activation, explicitly enable Cloudflare Access for
-the intended reviewer policy, then verify an authorized reviewer can enter and an
-unauthenticated preview request is denied. Production `workers.dev` remains public.
+the intended reviewer policy: **Workers & Pages → deepgeno-watch → Access → Protect
+this Worker behind Access → Previews only**, then choose or create the curator allow
+policy and apply it. Verify an authorized reviewer can enter and an unauthenticated
+private-window request is challenged or denied. Production `workers.dev` remains public.
 `scripts/setup-private-ops.sh` does not alter Cloudflare; inspect dashboard settings
 separately and do not use the obsolete activation wizard.
 

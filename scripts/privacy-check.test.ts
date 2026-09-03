@@ -18,6 +18,7 @@ describe("public build boundary", () => {
   it("recognizes provider keys without flagging Fontsource subset names", () => {
     expect(privateMarkerPattern.test("sk-vietnamese-wght-normal")).toBe(false);
     expect(privateMarkerPattern.test("sk-latin-ext-wght-normal")).toBe(false);
+    expect(privateMarkerPattern.test("CLOUDFLARE_AI_API_TOKEN")).toBe(true);
     expect(
       privateMarkerPattern.test("sk-proj-abcdefghijklmnopqrstuvwxyz0123456789"),
     ).toBe(true);

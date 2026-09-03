@@ -57,7 +57,7 @@ jobs:
       - name: Install pinned engine dependencies
         run: npm ci
         working-directory: ${{ steps.bootstrap-engine.outputs.project-root }}
-      - name: Probe configured model access without generation
+      - name: Probe configured model access without paper data
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" probe-model
         env:
           DEEPGENO_PROJECT_ROOT: ${{ steps.bootstrap-engine.outputs.project-root }}
@@ -65,8 +65,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
 
   record-triage:
     name: Record merged Gate 1
@@ -166,8 +166,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
       - name: Create private draft and Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
@@ -176,8 +176,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
           GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
           INPUT_PAPER_ID: ${{ matrix.paper }}
 
@@ -226,8 +226,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
       - name: Create private draft and Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
@@ -236,8 +236,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
           GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
           INPUT_PAPER_ID: ${{ inputs.paper_id }}
           INPUT_REVISION_OF: ${{ inputs.revision_of }}
@@ -333,8 +333,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
       - name: Create revised private draft and a new Gate 2 pull request
         run: node "$DEEPGENO_PROJECT_ROOT/scripts/github/automation.mjs" synthesize
         env:
@@ -343,8 +343,8 @@ jobs:
           DEEPGENO_MODEL_PROVIDER: ${{ vars.DEEPGENO_MODEL_PROVIDER }}
           DEEPGENO_MODEL_NAME: ${{ vars.DEEPGENO_MODEL_NAME }}
           DEEPGENO_MODEL_MAX_OUTPUT_TOKENS: ${{ vars.DEEPGENO_MODEL_MAX_OUTPUT_TOKENS || '5000' }}
-          OPENAI_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'openai' && secrets.OPENAI_API_KEY || '' }}
-          ANTHROPIC_API_KEY: ${{ vars.DEEPGENO_MODEL_PROVIDER == 'anthropic' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_AI_API_TOKEN: ${{ secrets.CLOUDFLARE_AI_API_TOKEN }}
           GH_TOKEN: ${{ steps.private-app-token.outputs.token }}
           INPUT_PAPER_ID: ${{ needs.record-summary.outputs.paper_id }}
           INPUT_REVISION_OF: ${{ needs.record-summary.outputs.draft_id }}

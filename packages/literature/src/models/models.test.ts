@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { TechnicalSummarySchema } from "@deepgeno/contracts";
 import { AnthropicStructuredModel } from "./anthropic.js";
+import { CloudflareWorkersAiStructuredModel } from "./cloudflare-workers-ai.js";
 import { OpenAiStructuredModel } from "./openai.js";
 
 const summary = {
@@ -48,6 +49,161 @@ const request = {
 };
 
 describe("structured model adapters", () => {
+  it("requests validated JSON Schema output from the direct Workers AI endpoint", async () => {
+    let captured:
+      | { input: string | URL | Request; init: RequestInit | undefined }
+      | undefined;
+    const adapter = new CloudflareWorkersAiStructuredModel({
+      accountId: "0123456789abcdef0123456789abcdef",
+      apiToken: "private-cloudflare-token",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      fetch: async (input, init) => {
+        captured = { input, init };
+        return Response.json({
+          success: true,
+          errors: [],
+          messages: [],
+          result: {
+            response: summary,
+            usage: {
+              prompt_tokens: 120,
+              completion_tokens: 60,
+              total_tokens: 180,
+            },
+          },
+        });
+      },
+    });
+
+    const response = await adapter.generate(request);
+
+    expect(response).toEqual({
+      value: summary,
+      provider: "cloudflare-workers-ai",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      usage: { inputTokens: 120, outputTokens: 60 },
+    });
+    expect(String(captured?.input)).toBe(
+      "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/google/gemma-4-26b-a4b-it",
+    );
+    expect(captured?.init).toMatchObject({
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: "Bearer private-cloudflare-token",
+        "content-type": "application/json",
+      },
+      redirect: "error",
+    });
+    expect(captured?.init?.signal).toBeInstanceOf(AbortSignal);
+    const body = JSON.parse(String(captured?.init?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body).toMatchObject({
+      messages: [
+        { role: "system", content: request.system },
+        { role: "user", content: request.prompt },
+      ],
+      max_tokens: 5000,
+      temperature: 0,
+      stream: false,
+      store: false,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          additionalProperties: false,
+        },
+      },
+    });
+    expect(body).not.toHaveProperty("tools");
+  });
+
+  it("normalizes JSON text and chat-completion Workers AI responses", async () => {
+    const responses = [
+      {
+        success: true,
+        errors: [],
+        messages: [],
+        result: { response: JSON.stringify(summary) },
+      },
+      {
+        success: true,
+        errors: [],
+        messages: [],
+        result: {
+          id: "chatcmpl_fixture",
+          choices: [
+            {
+              message: { role: "assistant", content: JSON.stringify(summary) },
+            },
+          ],
+        },
+      },
+    ];
+    const adapter = new CloudflareWorkersAiStructuredModel({
+      accountId: "0123456789abcdef0123456789abcdef",
+      apiToken: "private-cloudflare-token",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      fetch: async () => Response.json(responses.shift()),
+    });
+
+    await expect(adapter.generate(request)).resolves.toMatchObject({
+      value: summary,
+    });
+    await expect(adapter.generate(request)).resolves.toMatchObject({
+      value: summary,
+      responseId: "chatcmpl_fixture",
+    });
+  });
+
+  it("makes one attempt and sanitizes Workers AI transport failures", async () => {
+    let attempts = 0;
+    const adapter = new CloudflareWorkersAiStructuredModel({
+      accountId: "0123456789abcdef0123456789abcdef",
+      apiToken: "private-cloudflare-token",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      fetch: async () => {
+        attempts += 1;
+        throw new Error("transport leaked private-cloudflare-token");
+      },
+    });
+
+    const call = adapter.generate(request);
+
+    await expect(call).rejects.toThrow(
+      "Cloudflare Workers AI request failed before receiving a response",
+    );
+    await expect(call).rejects.not.toThrow("private-cloudflare-token");
+    expect(attempts).toBe(1);
+  });
+
+  it("sanitizes invalid structured Workers AI output", async () => {
+    const adapter = new CloudflareWorkersAiStructuredModel({
+      accountId: "0123456789abcdef0123456789abcdef",
+      apiToken: "private-cloudflare-token",
+      model: "@cf/google/gemma-4-26b-a4b-it",
+      fetch: async () =>
+        Response.json({
+          success: true,
+          errors: [],
+          messages: [],
+          result: {
+            response: '{"hook":"private invalid model output"}',
+          },
+        }),
+    });
+
+    const call = adapter.generate(request);
+
+    await expect(call).rejects.toThrow(
+      "Cloudflare Workers AI returned invalid structured output",
+    );
+    await expect(call).rejects.not.toThrow("private invalid model output");
+  });
+
   it("uses OpenAI Responses strict Zod parsing with no tools or storage", async () => {
     let captured: Record<string, unknown> | undefined;
     let requestOptions: Record<string, unknown> | undefined;

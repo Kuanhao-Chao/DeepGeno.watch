@@ -41,7 +41,11 @@ export const EvidenceScopeValues = [
 export const EvidenceScopeSchema = z.enum(EvidenceScopeValues);
 export type EvidenceScope = z.infer<typeof EvidenceScopeSchema>;
 
-export const ModelProviderValues = ["openai", "anthropic"] as const;
+export const ModelProviderValues = [
+  "openai",
+  "anthropic",
+  "cloudflare-workers-ai",
+] as const;
 export const ModelProviderSchema = z.enum(ModelProviderValues);
 export type ModelProvider = z.infer<typeof ModelProviderSchema>;
 

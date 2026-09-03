@@ -87,6 +87,35 @@ describe("private operations renderer", () => {
     );
   });
 
+  it("syncs only allowlisted static files while preserving private runtime state", async () => {
+    const destination = await destinationPath();
+    expect(render(destination, commitA).status).toBe(0);
+    const runtimePath = path.join(
+      destination,
+      "data/private/checkpoints/source.json",
+    );
+    await mkdir(path.dirname(runtimePath), { recursive: true });
+    await writeFile(runtimePath, '{"private":"unchanged"}\n', "utf8");
+    await writeFile(path.join(destination, "README.md"), "old template\n");
+    await writeFile(
+      path.join(destination, ".github/workflows/summarize.yml"),
+      "old workflow\n",
+    );
+
+    const result = render(destination, commitB, ["--sync-static", "--repin"]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(await renderedStaticBytes(destination)).toEqual(
+      await renderedStaticBytes(path.resolve("templates/private-ops")),
+    );
+    expect(await readFile(runtimePath, "utf8")).toBe(
+      '{"private":"unchanged"}\n',
+    );
+    expect(
+      await readFile(path.join(destination, "engine.lock.json"), "utf8"),
+    ).toContain(commitB);
+  });
+
   it("fails closed on extra files and symlinked static files", async () => {
     const extraDestination = await destinationPath();
     expect(render(extraDestination, commitA).status).toBe(0);

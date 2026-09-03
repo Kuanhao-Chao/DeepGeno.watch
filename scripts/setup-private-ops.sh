@@ -283,14 +283,53 @@ render_pin() {
   )
 }
 
-render_repin() {
+render_sync() {
   (
     cd -- "$PUBLIC_ROOT"
     node scripts/github/render-private-ops.mjs \
       --destination "$STATE_ROOT" \
       --repository Kuanhao-Chao/DeepGeno.watch \
-      --commit "$PIN" --repin
+      --commit "$PIN" --sync-static
   )
+}
+
+render_sync_repin() {
+  (
+    cd -- "$PUBLIC_ROOT"
+    node scripts/github/render-private-ops.mjs \
+      --destination "$STATE_ROOT" \
+      --repository Kuanhao-Chao/DeepGeno.watch \
+      --commit "$PIN" --sync-static --repin
+  )
+}
+
+is_allowlisted_static_sync_status() {
+  local sync_status="$1" require_lock="$2" status_line="" status_code="" sync_path=""
+  local found_lock="false"
+
+  while IFS= read -r status_line; do
+    [[ -n "$status_line" ]] || continue
+    status_code="${status_line:0:3}"
+    [[ "$status_code" == " M " || "$status_code" == "?? " ]] || return 1
+    sync_path="${status_line:3}"
+    case "$sync_path" in
+      ".github/actions/bootstrap-engine/action.yml" | \
+        ".github/workflows/ingest.yml" | \
+        ".github/workflows/private-ops-preflight.yml" | \
+        ".github/workflows/summarize.yml" | \
+        ".github/workflows/triage.yml" | \
+        ".gitignore" | \
+        "README.md" | \
+        "data/private/README.md") ;;
+      "engine.lock.json")
+        [[ "$status_code" == " M " ]] || return 1
+        found_lock="true"
+        ;;
+      *) return 1 ;;
+    esac
+  done <<< "$sync_status"
+
+  [[ "$require_lock" != "true" || "$found_lock" == "true" ]]
 }
 
 SEED_PATHS=(
@@ -420,20 +459,29 @@ if git -C "$STATE_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
   CURRENT_PIN="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const lock = JSON.parse(readFileSync(process.argv[1], "utf8")); process.stdout.write(lock.commit ?? "");' "$STATE_ROOT/engine.lock.json")"
   [[ "$CURRENT_PIN" =~ ^[0-9a-f]{40}$ ]] || abort "The existing engine lock does not contain a literal commit."
   if [[ "$CURRENT_PIN" != "$PIN" ]]; then
-    say "Public main advanced from $CURRENT_PIN to $PIN. Only engine.lock.json may change."
-    confirm "Repin the companion, commit only engine.lock.json, and non-force push main?" || abort "The existing engine pin was left unchanged."
+    say "Public main advanced from $CURRENT_PIN to $PIN. The generated wrapper allowlist and engine.lock.json may change; private runtime state must not change."
+    confirm "Sync the eight generated wrappers, repin the companion, commit only allowlisted files, and non-force push main?" || abort "The existing wrappers and engine pin were left unchanged."
     git -C "$STATE_ROOT" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || abort "Configure a Git author identity manually, then rerun the wizard."
-    render_repin
-    [[ "$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)" == " M engine.lock.json" ]] || abort "Repinning changed more than engine.lock.json."
-    git -C "$STATE_ROOT" add -- engine.lock.json
-    git -C "$STATE_ROOT" commit -m "chore(operations): repin public engine"
-    git -C "$STATE_ROOT" push origin HEAD:main
-    render_pin
-    [[ -z "$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || abort "A same-pin repin verification must be a clean no-op."
+    render_sync_repin
+    SYNC_STATUS="$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)"
+    is_allowlisted_static_sync_status "$SYNC_STATUS" "true" || abort "Wrapper sync or repin changed a non-allowlisted path or did not update engine.lock.json."
   else
-    render_pin
-    [[ -z "$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || abort "A same-pin render must be a no-op."
+    say "The engine pin is current. Generated wrapper files will still be compared with the trusted public template."
+    confirm "Sync only the eight generated wrappers when needed?" || abort "The existing wrappers were left unchanged."
+    render_sync
+    SYNC_STATUS="$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)"
+    is_allowlisted_static_sync_status "$SYNC_STATUS" "false" || abort "Wrapper sync changed a non-allowlisted path."
   fi
+  if [[ -n "$SYNC_STATUS" ]]; then
+    git -C "$STATE_ROOT" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || abort "Configure a Git author identity manually, then rerun the wizard."
+    confirm "Commit the displayed allowlisted wrapper and engine changes, then non-force push private main?" || abort "Synchronized files remain local and uncommitted."
+    git -C "$STATE_ROOT" add -- "${SEED_PATHS[@]}"
+    git -C "$STATE_ROOT" commit -m "chore(operations): sync private wrappers and engine pin"
+    git -C "$STATE_ROOT" push origin HEAD:main
+  fi
+  unset SYNC_STATUS
+  render_pin
+  [[ -z "$(git -C "$STATE_ROOT" status --porcelain=v1 --untracked-files=all)" ]] || abort "A same-pin wrapper verification must be a clean no-op."
 else
   git -C "$STATE_ROOT" symbolic-ref HEAD refs/heads/main
   git -C "$STATE_ROOT" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || abort "Configure a Git author identity manually, then rerun the wizard."
@@ -460,14 +508,21 @@ step "Leave Prevent self-review disabled in this single-curator topology; otherw
 step "Save the synthesis environment protection rules before continuing."
 pause "Press Enter after the protected synthesis environment exists."
 confirm "Confirm private-repository environment secrets and variables are available, synthesis is restricted to main, Prevent self-review is disabled, and any required reviewer was added only when this private-repository plan supports it." || abort "Private environment secrets are required. Upgrade to an eligible paid GitHub plan, then rerun; never fall back to repository or public provider secrets."
+open_url "https://dash.cloudflare.com/?to=/:account/ai/workers-ai"
+step "In the Cloudflare dashboard, select Workers AI, then select Use REST API."
+step "Under Get Account ID, copy the 32-character Account ID. This identifier is not a secret."
+read_visible CLOUDFLARE_ACCOUNT_ID_VALUE "Paste the Cloudflare Account ID:"
+[[ "$CLOUDFLARE_ACCOUNT_ID_VALUE" =~ ^[A-Fa-f0-9]{32}$ ]] || abort "The Cloudflare Account ID must contain exactly 32 hexadecimal characters."
 confirm "Write the fixed initial variables to the private companion?" || abort "No variables were written."
 gh variable set DEEPGENO_PUBLIC_REPOSITORY --repo "$STATE_REPOSITORY" --body "$PUBLIC_REPOSITORY"
 gh variable set DEEPGENO_CURATOR_GITHUB_LOGIN --repo "$STATE_REPOSITORY" --body "$EXPECTED_LOGIN"
 gh variable set DEEPGENO_MAX_SUMMARIES_PER_RUN --repo "$STATE_REPOSITORY" --body "1"
 gh variable set DEEPGENO_LIVE_INGESTION_ENABLED --repo "$STATE_REPOSITORY" --body "false"
-gh variable set DEEPGENO_MODEL_PROVIDER --env synthesis --repo "$STATE_REPOSITORY" --body "openai"
-gh variable set DEEPGENO_MODEL_NAME --env synthesis --repo "$STATE_REPOSITORY" --body "gpt-5.6-terra"
+gh variable set DEEPGENO_MODEL_PROVIDER --env synthesis --repo "$STATE_REPOSITORY" --body "cloudflare-workers-ai"
+gh variable set DEEPGENO_MODEL_NAME --env synthesis --repo "$STATE_REPOSITORY" --body "@cf/google/gemma-4-26b-a4b-it"
 gh variable set DEEPGENO_MODEL_MAX_OUTPUT_TOKENS --env synthesis --repo "$STATE_REPOSITORY" --body "5000"
+gh variable set CLOUDFLARE_ACCOUNT_ID --env synthesis --repo "$STATE_REPOSITORY" --body "$CLOUDFLARE_ACCOUNT_ID_VALUE"
+unset CLOUDFLARE_ACCOUNT_ID_VALUE
 read_visible CROSSREF_MAILTO_VALUE "Optional Crossref polite-pool email (Enter skips it):"
 if [[ -n "$CROSSREF_MAILTO_VALUE" ]]; then
   gh variable set CROSSREF_MAILTO --repo "$STATE_REPOSITORY" --body "$CROSSREF_MAILTO_VALUE"
@@ -476,16 +531,16 @@ else
 fi
 unset CROSSREF_MAILTO_VALUE
 
-open_url "https://platform.openai.com/api-keys"
-step "Create a restricted, project-scoped OpenAI key for the selected gpt-5.6-terra synthesis model."
+open_url "https://dash.cloudflare.com/?to=/:account/ai/workers-ai"
+step "Select Use REST API, then Create a Workers AI API Token. Review the prefilled account scope and Workers AI permissions, select Create API Token, and copy the token once. If you build a custom token, it needs Workers AI Read and Edit only for this account. Never use the Global API Key."
 open_url "https://github.com/Kuanhao-Chao/DeepGeno.watch-state/settings/environments/synthesis"
-step "Copy OPENAI_API_KEY browser-to-browser into the synthesis environment; never paste it into this terminal."
-step "The initial environment must contain exactly OPENAI_API_KEY. ANTHROPIC_API_KEY is an alternative only and must be absent while provider=openai."
+step "Under Environment secrets, select Add environment secret. Name it CLOUDFLARE_AI_API_TOKEN, paste the Cloudflare token, and save it. Never paste the token into this terminal."
+step "Remove any old model-provider environment secrets. The initial environment must contain exactly CLOUDFLARE_AI_API_TOKEN."
 open_url "https://github.com/Kuanhao-Chao/DeepGeno.watch-state/settings/secrets/actions"
 step "Optionally add OPENALEX_API_KEY as a repository secret browser-to-browser; never paste it into this terminal."
 pause "Press Enter after the environment key and any optional OpenAlex key are configured."
 SYNTHESIS_SECRET_NAMES="$(gh secret list --env synthesis --repo "$STATE_REPOSITORY" --json name --jq '.[].name')"
-[[ "$SYNTHESIS_SECRET_NAMES" == "OPENAI_API_KEY" ]] || abort "The initial synthesis environment must contain exactly OPENAI_API_KEY and no other secret."
+[[ "$SYNTHESIS_SECRET_NAMES" == "CLOUDFLARE_AI_API_TOKEN" ]] || abort "The initial synthesis environment must contain exactly CLOUDFLARE_AI_API_TOKEN and no other secret."
 unset SYNTHESIS_SECRET_NAMES
 
 stage "Create and install the curator GitHub App"
@@ -538,17 +593,21 @@ done
 gh run watch "$PREFLIGHT_RUN_ID" --repo "$STATE_REPOSITORY" --exit-status
 say "✓ The pinned engine and both one-repository App token scopes passed preflight."
 
-stage "Review the cutover gate"
-say "This stage changes nothing. Task 5 owns the model probe, controlled scan, first publication, ruleset, and daily-ingestion enablement."
+stage "Review the activation gate"
+say "This stage changes nothing. The operations runbook owns the model probe, strict scan, first publication, and daily-ingestion enablement."
 step "Merge the public implementation only after its full local review; require the stable CI / verify check on public main."
 step "Confirm $STATE_REPOSITORY is private, on main, and has a green preflight at its current head."
 step "Confirm the curator App is installed on exactly the private and public repositories, with no bypass of public branch protection."
 step "Confirm synthesis has exactly the selected provider key and DEEPGENO_LIVE_INGESTION_ENABLED is still false."
 step "Confirm the public repository contains no operational literature workflows or private state."
-step "Enable Cloudflare Access for Worker Preview URLs, then verify the intended reviewer can enter and an unauthenticated request is denied."
+step "Enable Cloudflare Access for Worker Preview URLs."
+open_url "https://dash.cloudflare.com/?to=/:account/workers-and-pages"
+step "In Workers & Pages, select deepgeno-watch, open the Access tab, and select Protect this Worker behind Access."
+step "Choose Previews only so the production workers.dev URL remains public. Under Authentication policy, select or create an Allow policy containing only the curator identity, review the session duration, and select Apply Access."
+step "Open a preview URL from the Worker's Deployments tab while signed in and confirm it loads. Open the same URL in a private/incognito window and confirm Access challenges or denies the request."
 step "Only after Preview Access passes, allow Gate 2 approval to open the first one-file public PR."
 step "Keep the existing deepgeno-watch Worker, production URL, and configuration connected only to $PUBLIC_REPOSITORY; never connect the companion."
-step "After Task 5 validates cutover, remove legacy DEEPGENO_GITHUB_TOKEN from the public repository in GitHub Settings; deletion is deliberately not executable here."
+step "After the operations runbook validates activation, remove legacy DEEPGENO_GITHUB_TOKEN from the public repository in GitHub Settings; deletion is deliberately not executable here."
 warn "Do not dispatch live ingestion, merge either human gate, alter the public ruleset, or remove legacy credentials from this wizard."
 
 finish

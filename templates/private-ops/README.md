@@ -22,8 +22,9 @@ is merged and `CI / verify` is green:
 
 The wizard renders exactly the eight allowlisted template files plus
 `engine.lock.json`, confirms that diff, and non-force pushes private `main`. A later
-engine update is a separate confirmed `--repin` operation and may change only
-`engine.lock.json`; rerunning the renderer with the same pin must be a clean no-op.
+engine update uses the separately confirmed `--sync-static --repin` path: only the
+eight generated wrappers and the engine lock may change, while all private runtime
+state is preserved. Rerunning the renderer with the same pin must be a clean no-op.
 
 The renderer assumes a canonical sibling standard clone, one filesystem, and one
 trusted operator. Linked-worktree `.git` files are unsupported. Cross-filesystem atomic
@@ -48,14 +49,17 @@ Repository secrets:
 
 Protected `synthesis` environment variables:
 
-- `DEEPGENO_MODEL_PROVIDER` — initially `openai`
-- `DEEPGENO_MODEL_NAME` — initially `gpt-5.6-terra`
+- `DEEPGENO_MODEL_PROVIDER` — `cloudflare-workers-ai`
+- `DEEPGENO_MODEL_NAME` — `@cf/google/gemma-4-26b-a4b-it`
 - `DEEPGENO_MODEL_MAX_OUTPUT_TOKENS` — initially `5000`
+- `CLOUDFLARE_ACCOUNT_ID` — the 32-character account ID shown by Workers AI
 
-The initial protected environment contains exactly `OPENAI_API_KEY`, entered
-browser-to-browser. Configure exactly one of `OPENAI_API_KEY` or
-`ANTHROPIC_API_KEY`; the latter is the mutually exclusive alternative for a future
-explicit provider switch. Provider keys never enter the setup wizard.
+The protected environment contains exactly `CLOUDFLARE_AI_API_TOKEN`, entered
+browser-to-browser from Cloudflare's **Workers AI → Use REST API** setup. Give the
+account-scoped token only Workers AI read/edit access; never use a Global API Key,
+store the token in the public repository, or route private paper evidence through AI
+Gateway logging. Cloudflare's free allocation is the rollout budget, not permission to
+retry ambiguous calls. Model credentials never enter the setup wizard.
 
 Private-repository environment secrets and variables require an eligible paid GitHub
 plan. If they are unavailable, stop and upgrade; never fall back to repository-level or
@@ -79,13 +83,13 @@ live ingestion is enabled.
 ## Activation safety
 
 Keep live ingestion disabled and use the manual **Literature synthesis and
-publication** workflow's default `probe-model` operation before the controlled scan.
-The probe checks configured OpenAI model metadata without generation or state writes.
-The approved controlled-scan decision manifest remains private and is compiled against
-the generated Gate 1 body with the pinned engine; follow `docs/operations.md` in the
-public engine for the exact command and gate order.
+publication** workflow's default `probe-model` operation before the first strict scan.
+The probe makes one tiny structured Workers AI request with no paper, abstract, or
+evidence data and performs no state write. It consumes a small amount of the free
+allocation. Follow `docs/operations.md` in the pinned public engine for the exact
+shadow/live window, browser review, terminal review, and gate order.
 
-Paid synthesis pushes prepared and one-use armed request states before dispatch. Never
+Provider synthesis pushes prepared and one-use armed request states before dispatch. Never
 edit those records or automatically retry an armed, dispatching, or ambiguous request.
 Inspect provider history and use only the documented timestamp-guarded reconciliation
 procedure. Enable and verify Cloudflare Preview URL Access before approving Gate 2 for

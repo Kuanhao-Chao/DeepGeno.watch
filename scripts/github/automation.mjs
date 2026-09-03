@@ -28,6 +28,7 @@ import {
   pullRequestMetadata,
   readEvent,
   relevantPullRequestKind,
+  requiresCompleteSources,
   resolveAutomationRoots,
   resolveDiscoveryWindows,
   validateChangedPaths,
@@ -147,6 +148,7 @@ async function ingest() {
     stateRoot: roots.stateRoot,
     runnerTemp,
     shadow,
+    requireCompleteSources: requiresCompleteSources(trigger),
     discover: async (stagedStateRoot) => {
       const reports = [];
       for (const window of windows) {

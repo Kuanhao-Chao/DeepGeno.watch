@@ -70,7 +70,7 @@ export interface StructuredModelRequest {
 
 export interface StructuredModelResponse {
   value: unknown;
-  provider: "openai" | "anthropic" | "fake";
+  provider: "openai" | "anthropic" | "cloudflare-workers-ai" | "fake";
   model: string;
   responseId?: string;
   usage?: {
