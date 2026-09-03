@@ -602,7 +602,7 @@ export async function probeModelAccess(
                 additionalProperties: false,
               },
             },
-            max_tokens: 32,
+            max_tokens: 512,
             temperature: 0,
             stream: false,
             store: false,
