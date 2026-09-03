@@ -9,7 +9,7 @@ import {
   resolvePublicDeliveryConfig,
 } from "./cli.js";
 import { GitFileStateStore } from "./store.js";
-import { renderCandidateReview } from "./review.js";
+import { parseCandidateReview, renderCandidateReview } from "./review.js";
 import { createLiteratureLifecycle } from "./lifecycle.js";
 import { FixtureSource } from "./sources/fixture.js";
 
@@ -267,4 +267,69 @@ describe("literature CLI roots", () => {
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("prepares synthesis with cloudflare-workers-ai model provider", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "deepgeno-synthesis-"));
+    roots.push(root);
+    const store = new GitFileStateStore(root);
+    const lifecycle = createLiteratureLifecycle({
+      store,
+      sources: [
+        new FixtureSource([
+          {
+            source: "biorxiv",
+            sourceId: "10.1101/2026.08.28.123456",
+            title: "DNA model predicts enhancer activity",
+            authors: ["Ada Genome"],
+            abstract:
+              "A genomic transformer predicts DNA regulatory sequence enhancer activity and gene expression across human cell types with strong benchmark results and computational genomics analysis.",
+            publishedAt: "2026-08-28",
+            url: "https://doi.org/10.1101/2026.08.28.123456",
+            categories: ["bioinformatics"],
+          },
+        ]),
+      ],
+      clock: () => new Date("2026-08-28T07:00:00.000Z"),
+      relevanceThreshold: 0.2,
+      model: {
+        provider: "cloudflare-workers-ai",
+        model: "@cf/google/gemma-4-26b-a4b-it",
+        generate: vi.fn(),
+      },
+    });
+
+    const discovery = await lifecycle.run({
+      kind: "discover",
+      from: "2026-08-28",
+      to: "2026-08-28",
+      trigger: "test",
+    });
+    if (discovery.command !== "discover") throw new Error("Unexpected report");
+    const batch = await store.loadCandidateBatch(discovery.batchId);
+    const projection = await lifecycle.project({
+      kind: "candidate-inbox",
+      batchId: batch.id,
+    });
+    if (projection.kind !== "candidate-inbox")
+      throw new Error("Unexpected projection");
+    const decision = parseCandidateReview(
+      projection.markdown.replace("- [ ] Summarize", "- [x] Summarize"),
+      batch,
+      {
+        actor: { id: "curator", kind: "human" },
+        decidedAt: "2026-08-28T07:00:00.000Z",
+      },
+    );
+    await lifecycle.applyDecisions(decision);
+
+    const prepared = await lifecycle.run({
+      kind: "prepare-synthesis",
+      paperId: batch.candidates[0]!.paper.id,
+    });
+    expect(prepared).toMatchObject({
+      command: "prepare-synthesis",
+      requestState: "prepared",
+    });
+  });
 });
+
