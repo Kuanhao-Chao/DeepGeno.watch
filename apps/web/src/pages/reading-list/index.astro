@@ -18,24 +18,24 @@ const counts = {
 >
   <dl class="progress-summary">
     <div class="progress-summary__item">
-      <div class="progress-summary__meta">
-        <dt>Queued</dt>
+      <dt class="progress-summary__meta">
+        <span>Queued</span>
         <span class="progress-summary__hint">Candidates to triage</span>
-      </div>
+      </dt>
       <dd>{counts.queued}</dd>
     </div>
     <div class="progress-summary__item">
-      <div class="progress-summary__meta">
-        <dt>Skimmed</dt>
+      <dt class="progress-summary__meta">
+        <span>Skimmed</span>
         <span class="progress-summary__hint">Active & triaged</span>
-      </div>
+      </dt>
       <dd>{counts.skimmed}</dd>
     </div>
     <div class="progress-summary__item">
-      <div class="progress-summary__meta">
-        <dt>Read</dt>
+      <dt class="progress-summary__meta">
+        <span>Read</span>
         <span class="progress-summary__hint">Full synthesis published</span>
-      </div>
+      </dt>
       <dd>{counts.read}</dd>
     </div>
   </dl>
@@ -176,9 +176,13 @@ const counts = {
   }
 
   .progress-summary__hint {
+    display: block;
     color: var(--color-muted);
+    font-family: var(--font-body);
     font-size: 0.74rem;
     font-weight: 450;
+    letter-spacing: normal;
+    text-transform: none;
   }
 
   .progress-summary dd {

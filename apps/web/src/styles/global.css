@@ -38,9 +38,12 @@
   --radius-lg: 12px;
   --radius-pill: 9999px;
   --shadow-sm: 0 1px 2px rgba(23, 26, 24, 0.05);
-  --shadow-md: 0 4px 12px rgba(23, 26, 24, 0.08), 0 1px 3px rgba(23, 26, 24, 0.04);
-  --shadow-lg: 0 8px 24px rgba(23, 26, 24, 0.12), 0 2px 6px rgba(23, 26, 24, 0.06);
-  --shadow-drawer: 0 -4px 24px rgba(23, 26, 24, 0.1), 0 -1px 3px rgba(23, 26, 24, 0.05);
+  --shadow-md:
+    0 4px 12px rgba(23, 26, 24, 0.08), 0 1px 3px rgba(23, 26, 24, 0.04);
+  --shadow-lg:
+    0 8px 24px rgba(23, 26, 24, 0.12), 0 2px 6px rgba(23, 26, 24, 0.06);
+  --shadow-drawer:
+    0 -4px 24px rgba(23, 26, 24, 0.1), 0 -1px 3px rgba(23, 26, 24, 0.05);
   --container: 76rem;
   --container-narrow: 48rem;
   --gutter: clamp(1.1rem, 4vw, 2.6rem);
@@ -78,7 +81,8 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
-    --shadow-drawer: 0 -4px 24px rgba(0, 0, 0, 0.6), 0 -1px 4px rgba(0, 0, 0, 0.4);
+    --shadow-drawer:
+      0 -4px 24px rgba(0, 0, 0, 0.6), 0 -1px 4px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -393,7 +397,11 @@ select:focus-visible {
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
-  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
   user-select: none;
 }
 
@@ -526,7 +534,9 @@ select:focus-visible {
   font-size: var(--fs-abstract);
   line-height: 1.68;
   color: var(--color-ink-soft);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .abstract-panel p {
@@ -686,7 +696,9 @@ select:focus-visible {
   border: 1px solid var(--color-rule-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-drawer);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+  transition:
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.2s ease;
 }
 
 .triage-drawer[hidden],
@@ -901,6 +913,14 @@ select:focus-visible {
   }
 }
 
+@media (max-width: 36rem) {
+  .segmented-btn,
+  .triage-btn,
+  .category-pill {
+    min-height: 2.75rem; /* Mobile touch ergonomic >= 44px */
+  }
+}
+
 @media (max-width: 32rem) {
   :root {
     --gutter: 0.9rem;
@@ -917,7 +937,7 @@ select:focus-visible {
 
   .triage-btn {
     flex: 1;
-    min-height: 2.35rem; /* Touch ergonomic */
+    min-height: 2.75rem; /* Touch ergonomic >= 44px */
     font-size: 0.8rem;
   }
 

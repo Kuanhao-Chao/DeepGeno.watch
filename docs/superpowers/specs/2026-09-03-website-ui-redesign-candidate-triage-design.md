@@ -3,7 +3,7 @@
 **Date:** 2026-09-03  
 **Status:** Approved for Implementation  
 **Target Repository:** `Kuanhao-Chao/DeepGeno.watch`  
-**Feature Branch:** `feat/ui-redesign-triage-categories`  
+**Feature Branch:** `feat/ui-redesign-triage-categories`
 
 ---
 
@@ -29,8 +29,8 @@ This specification defines the architecture, user experience, and implementation
 
 3. **Dual Arrangement System (Category & Date)**:
    - Provide an intuitive **Segmented View Switcher**:
-     - **"Timeline (By Date)"**: Groups papers into chronological clusters (e.g., *Today · Sep 3, 2026*, *Late August 2026*, *Mid August 2026*).
-     - **"By Category"**: Groups papers under structured genomic domains (*DNA Language Models*, *RNA Models*, *Sequence to Function*, *Single-Cell Learning*, *Epigenomics & 3D Genome*, *Protein Models*).
+     - **"Timeline (By Date)"**: Groups papers into chronological clusters (e.g., _Today · Sep 3, 2026_, _Late August 2026_, _Mid August 2026_).
+     - **"By Category"**: Groups papers under structured genomic domains (_DNA Language Models_, _RNA Models_, _Sequence to Function_, _Single-Cell Learning_, _Epigenomics & 3D Genome_, _Protein Models_).
      - **"Standard Explorer"**: The flat list with multi-parameter filter form.
    - A **Sticky Category Pill Bar** at the top of the explorer with 1-click domain filtering and paper count chips.
 
@@ -62,6 +62,7 @@ apps/web/
 ## 3. Detailed Component Specifications
 
 ### 3.1 Design System & Typography (`global.css`)
+
 - **Typography Scale**:
   - Headings: `font-family: var(--font-display)` with balanced `letter-spacing: -0.025em` and tighter line heights (`1.15–1.25`).
   - Body & Abstracts: `font-family: var(--font-body)` with `line-height: 1.65` and `max-width: 70ch` to prevent eye strain.
@@ -72,6 +73,7 @@ apps/web/
   - Desktop/Laptop: Multi-column grid with clear alignment between date/venue, title/hook/abstract, and status/action clusters.
 
 ### 3.2 Paper Card & Triage Actions (`PaperRow.astro`)
+
 - **Elements**:
   1. **Header / Metadata**: Date formatted clearly (`Sep 3, 2026`), venue/source badge (`bioRxiv`, `Nature`, `arXiv`), and publication link.
   2. **Title & Authors**: Title linking to paper page, with full author list formatted cleanly.
@@ -86,18 +88,19 @@ apps/web/
      - Status Badge: Displays `Deep Dive Queued` (emerald) or `Archived` (muted) when marked.
 
 ### 3.3 Explorer & Taxonomy Navigation (`PapersExplorer.astro` & `explorer.js`)
+
 - **Segmented View Switcher**:
   - `[ Timeline (Date) ]` | `[ By Category ]` | `[ Filter & Search ]`
 - **Sticky Category Pill Bar**:
   - Horizontal scrollable pill list:
-    - *All Topics*
-    - *DNA Language Models*
-    - *RNA Language Models*
-    - *Sequence to Function*
-    - *Single-Cell Deep Learning*
-    - *Epigenomics & 3D Genome*
-    - *Protein Language Models*
-    - *Variant Effect Prediction*
+    - _All Topics_
+    - _DNA Language Models_
+    - _RNA Language Models_
+    - _Sequence to Function_
+    - _Single-Cell Deep Learning_
+    - _Epigenomics & 3D Genome_
+    - _Protein Language Models_
+    - _Variant Effect Prediction_
   - Active pill highlights with counts.
 - **Global Abstract Toggle**:
   - Button: "Expand All Abstracts" / "Collapse All Abstracts".
@@ -106,6 +109,7 @@ apps/web/
   - When in "By Category" mode: Client-side JS groups items under topic headers with domain icons and counts.
 
 ### 3.4 Floating Triage Action Bar (`explorer.js` & `PapersExplorer.astro`)
+
 - **Docked at the bottom of the viewport** (with smooth fade/slide-up when selections exist):
   - Shows counters: `✨ Deep Dive: X` | `🗑️ Archived: Y`.
   - Action 1: **"Copy CLI Commands"** — Copies `gh workflow run summarize.yml -f paper_id=...` commands for all selected papers to clipboard.
@@ -122,8 +126,14 @@ apps/web/
   ```json
   {
     "decisions": {
-      "paper-slug-1": { "status": "deep-dive", "updatedAt": "2026-09-03T18:50:00Z" },
-      "paper-slug-2": { "status": "archived", "updatedAt": "2026-09-03T18:51:00Z" }
+      "paper-slug-1": {
+        "status": "deep-dive",
+        "updatedAt": "2026-09-03T18:50:00Z"
+      },
+      "paper-slug-2": {
+        "status": "archived",
+        "updatedAt": "2026-09-03T18:51:00Z"
+      }
     }
   }
   ```

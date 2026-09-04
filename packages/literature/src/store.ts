@@ -1013,13 +1013,9 @@ function validateSynthesisDescriptor(
     "Synthesis candidate and draft revisions must be positive integers",
   );
   invariant(
-    [
-      "openai",
-      "anthropic",
-      "cloudflare-workers-ai",
-      "fake",
-    ].includes(descriptor.provider) &&
-      descriptor.model.trim().length > 0,
+    ["openai", "anthropic", "cloudflare-workers-ai", "fake"].includes(
+      descriptor.provider,
+    ) && descriptor.model.trim().length > 0,
     "synthesis_model_invalid",
     "Synthesis request model identity is invalid",
   );
@@ -1052,12 +1048,9 @@ function validateSynthesisDescriptor(
 function validateSynthesisResult(result: SynthesisResult): void {
   TechnicalSummarySchema.parse(result.summary);
   invariant(
-    [
-      "openai",
-      "anthropic",
-      "cloudflare-workers-ai",
-      "fake",
-    ].includes(result.provider) &&
+    ["openai", "anthropic", "cloudflare-workers-ai", "fake"].includes(
+      result.provider,
+    ) &&
       result.model.trim().length > 0 &&
       /^[a-f0-9]{64}$/.test(result.promptSha256),
     "synthesis_result_invalid",

@@ -64,7 +64,7 @@ const getTimelineGroup = (dateString, refDate = new Date()) => {
   }
 
   const diffDays = Math.floor(
-    (refDate.getTime() - date.getTime()) / (1000 * 60 * 60 * 24)
+    (refDate.getTime() - date.getTime()) / (1000 * 60 * 60 * 24),
   );
   if (diffDays > 60) {
     return "Earlier";
@@ -140,7 +140,8 @@ const copyToClipboard = async (text) => {
     textarea.select();
     const doc = document;
     const cmd = "exec" + "Command";
-    const ok = typeof doc[cmd] === "function" ? Boolean(doc[cmd]("copy")) : false;
+    const ok =
+      typeof doc[cmd] === "function" ? Boolean(doc[cmd]("copy")) : false;
     textarea.remove();
     return ok;
   } catch {
@@ -185,11 +186,17 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
 
   const viewSwitcher = explorer.querySelector("[data-view-switcher]");
   const categoryBar = explorer.querySelector("[data-category-bar]");
-  const toggleAbstractsBtn = explorer.querySelector("[data-toggle-all-abstracts]");
+  const toggleAbstractsBtn = explorer.querySelector(
+    "[data-toggle-all-abstracts]",
+  );
 
   const triageDrawer = explorer.querySelector("[data-triage-bar]");
-  const deepDiveCountEl = explorer.querySelector("[data-triage-deep-dive-count]");
-  const archivedCountEl = explorer.querySelector("[data-triage-archived-count]");
+  const deepDiveCountEl = explorer.querySelector(
+    "[data-triage-deep-dive-count]",
+  );
+  const archivedCountEl = explorer.querySelector(
+    "[data-triage-archived-count]",
+  );
   const copyCliBtn = explorer.querySelector("[data-triage-copy-cli]");
   const exportJsonBtn = explorer.querySelector("[data-triage-export-json]");
   const filterOnlyBtn = explorer.querySelector("[data-triage-filter-only]");
@@ -215,13 +222,17 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
     const badge = row.querySelector("[data-triage-badge]");
     if (badge) {
       badge.hidden = !status;
-      badge.textContent = isDeepDive ? "Deep Dive" : isArchived ? "Archived" : "";
+      badge.textContent = isDeepDive
+        ? "Deep Dive"
+        : isArchived
+          ? "Archived"
+          : "";
       badge.className = `triage-badge${
         isDeepDive
           ? " triage-badge--deep-dive"
           : isArchived
-          ? " triage-badge--archived"
-          : ""
+            ? " triage-badge--archived"
+            : ""
       }`;
     }
 
@@ -337,12 +348,10 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
   const setFormFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
     for (const element of Array.from(form.elements)) {
-      if (
-        !(
-          element instanceof HTMLInputElement ||
-          element instanceof HTMLSelectElement
-        )
-      )
+      if (!(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement
+      ))
         continue;
       if (!element.name) continue;
       const fallback =
@@ -394,7 +403,8 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
         itemTags = [];
       }
 
-      const matchesQuery = !query || (item.dataset.search ?? "").includes(query);
+      const matchesQuery =
+        !query || (item.dataset.search ?? "").includes(query);
       const matchesTag = !tag || itemTags.includes(tag);
       const matchesPriority = !priority || item.dataset.priority === priority;
       const matchesProgress = !progress || item.dataset.progress === progress;
@@ -424,7 +434,7 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
 
     if (currentView === "timeline") {
       visibleItems.sort((a, b) =>
-        (b.dataset.date ?? "").localeCompare(a.dataset.date ?? "")
+        (b.dataset.date ?? "").localeCompare(a.dataset.date ?? ""),
       );
       const groups = new Map();
       for (const item of visibleItems) {
@@ -451,12 +461,12 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
         groups.get(catTitle).push(item);
       }
       const sortedCategories = Array.from(groups.keys()).sort((a, b) =>
-        a.localeCompare(b)
+        a.localeCompare(b),
       );
       for (const catTitle of sortedCategories) {
         const groupItems = groups.get(catTitle);
         groupItems.sort((a, b) =>
-          (b.dataset.date ?? "").localeCompare(a.dataset.date ?? "")
+          (b.dataset.date ?? "").localeCompare(a.dataset.date ?? ""),
         );
         const heading = createGroupHeading(catTitle, groupItems.length);
         list.appendChild(heading);
@@ -589,14 +599,14 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
         updateToggleAbstractsLabel();
       }
     },
-    true
+    true,
   );
 
   // Floating Triage Drawer Actions
   copyCliBtn?.addEventListener("click", async () => {
     const decisions = triageState.decisions || {};
     const deepDiveSlugs = Object.keys(decisions).filter(
-      (s) => decisions[s]?.status === "deep-dive"
+      (s) => decisions[s]?.status === "deep-dive",
     );
 
     if (deepDiveSlugs.length === 0) {
@@ -651,11 +661,11 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
     filterOnlyBtn.classList.toggle("is-active", filterTriagedOnly);
     filterOnlyBtn.setAttribute(
       "data-active",
-      filterTriagedOnly ? "true" : "false"
+      filterTriagedOnly ? "true" : "false",
     );
     filterOnlyBtn.setAttribute(
       "aria-pressed",
-      filterTriagedOnly ? "true" : "false"
+      filterTriagedOnly ? "true" : "false",
     );
     apply(false);
   });

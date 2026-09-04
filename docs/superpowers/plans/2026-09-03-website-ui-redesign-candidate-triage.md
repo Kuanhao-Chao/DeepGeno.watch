@@ -22,17 +22,19 @@
 ### Task 1: Design System & Responsive Typography Tokens (`apps/web/src/styles/global.css`)
 
 **Files:**
+
 - Modify: `apps/web/src/styles/global.css:1-250`
 
 **Interfaces:**
+
 - Consumes: CSS variables in `:root` and `@media (prefers-color-scheme: dark)`.
 - Produces: Enhanced typography scale, card surface variables (`--color-surface-hover`, `--color-accent-badge`, `--fs-abstract`), segmented switch styles, category pill bar styles, and floating triage drawer styles.
 
 - [ ] **Step 1: Inspect and prepare CSS tokens**
-Verify current CSS token definitions and additions needed for segmented switches, category pill bar, abstracts, and triage status indicators.
+      Verify current CSS token definitions and additions needed for segmented switches, category pill bar, abstracts, and triage status indicators.
 
 - [ ] **Step 2: Update `global.css` with responsive design tokens and component styling**
-Add tokens and CSS rules for:
+      Add tokens and CSS rules for:
   - `.segmented-switcher`: pill button group for view switching (Timeline, By Category, Search).
   - `.category-pills`: sticky horizontal scrollable category navigation bar with counts.
   - `.abstract-panel`: readable abstract container with optimized line length (`max-width: 72ch`), comfortable line-height (`1.68`), and subtle border.
@@ -42,10 +44,11 @@ Add tokens and CSS rules for:
   - Responsive layout media queries (`@media (max-width: 48rem)` and `@media (max-width: 32rem)`).
 
 - [ ] **Step 3: Verify build and formatting**
-Run: `npm run build`
-Expected: Static build completes with no CSS syntax errors.
+      Run: `npm run build`
+      Expected: Static build completes with no CSS syntax errors.
 
 - [ ] **Step 4: Commit design system updates**
+
 ```bash
 git add apps/web/src/styles/global.css
 git commit -m "style: modernize design tokens, responsive typography, and triage styles"
@@ -56,9 +59,11 @@ git commit -m "style: modernize design tokens, responsive typography, and triage
 ### Task 2: Enhanced Paper Card & Interactive Triage Actions (`apps/web/src/components/PaperRow.astro`)
 
 **Files:**
+
 - Modify: `apps/web/src/components/PaperRow.astro:1-229`
 
 **Interfaces:**
+
 - Consumes: `PaperEntry` from `../lib/papers`.
 - Produces: Rendered paper row with:
   - `data-slug={data.slug}`
@@ -72,7 +77,7 @@ git commit -m "style: modernize design tokens, responsive typography, and triage
   - Triage badge placeholder (`data-triage-badge`) for live client status rendering.
 
 - [ ] **Step 1: Update `PaperRow.astro` markup and styling**
-Enhance `PaperRow.astro` to include:
+      Enhance `PaperRow.astro` to include:
   - Clear date and venue chips in the card header.
   - Prominent article title and full authors list.
   - Distinct hook styling and full abstract section with formatted `<details>` or styled container.
@@ -81,10 +86,11 @@ Enhance `PaperRow.astro` to include:
   - Mobile card layout adjustments (stacked metadata, ergonomic thumb-tap targets).
 
 - [ ] **Step 2: Verify typecheck and build**
-Run: `npm run typecheck && npm run build`
-Expected: PASS with 0 errors.
+      Run: `npm run typecheck && npm run build`
+      Expected: PASS with 0 errors.
 
 - [ ] **Step 3: Commit PaperRow component updates**
+
 ```bash
 git add apps/web/src/components/PaperRow.astro
 git commit -m "feat(web): add interactive triage controls and responsive layout to PaperRow"
@@ -95,9 +101,11 @@ git commit -m "feat(web): add interactive triage controls and responsive layout 
 ### Task 3: Taxonomy Navigation, Segmented Switcher & Floating Triage Drawer (`apps/web/src/components/PapersExplorer.astro`)
 
 **Files:**
+
 - Modify: `apps/web/src/components/PapersExplorer.astro:1-240`
 
 **Interfaces:**
+
 - Consumes: `PaperEntry[]`, `tags`, `uniqueValues`.
 - Produces:
   - View switcher control (`data-view-switcher`): "Timeline (By Date)", "By Category", "Filter & Search".
@@ -111,17 +119,18 @@ git commit -m "feat(web): add interactive triage controls and responsive layout 
     - "Clear" button (`data-triage-clear`).
 
 - [ ] **Step 1: Update `PapersExplorer.astro` template and styles**
-Add markup for:
+      Add markup for:
   - Top control bar with View Mode Switcher and "Expand All Abstracts" button.
   - Sticky category pills bar generated from available topics and tags.
   - Floating triage drawer HTML docked at viewport bottom.
   - Responsive styles ensuring zero overlap with paper content.
 
 - [ ] **Step 2: Verify typecheck and build**
-Run: `npm run typecheck && npm run build`
-Expected: PASS with 0 errors.
+      Run: `npm run typecheck && npm run build`
+      Expected: PASS with 0 errors.
 
 - [ ] **Step 3: Commit PapersExplorer component updates**
+
 ```bash
 git add apps/web/src/components/PapersExplorer.astro
 git commit -m "feat(web): add view mode switcher, sticky category bar, and triage drawer to PapersExplorer"
@@ -132,9 +141,11 @@ git commit -m "feat(web): add view mode switcher, sticky category bar, and triag
 ### Task 4: Client-Side Interactive Controller (`apps/web/public/explorer.js`)
 
 **Files:**
+
 - Modify: `apps/web/public/explorer.js:1-103`
 
 **Interfaces:**
+
 - Consumes: DOM elements from `PapersExplorer.astro` and `PaperRow.astro`.
 - Produces:
   - Triage state management (`localStorage` key: `deepgeno_triage_v1`).
@@ -149,7 +160,7 @@ git commit -m "feat(web): add view mode switcher, sticky category bar, and triag
     - `search`: Standard query/filter view.
 
 - [ ] **Step 1: Implement enhanced `explorer.js` logic**
-Write the comprehensive client controller handling:
+      Write the comprehensive client controller handling:
   - Initial state hydration from `localStorage`.
   - Event delegation for triage buttons (`deep-dive`, `archived`, `reset`).
   - View mode switching with DOM grouping logic.
@@ -159,10 +170,11 @@ Write the comprehensive client controller handling:
   - Global abstract disclosure expand/collapse.
 
 - [ ] **Step 2: Verify client script and build**
-Run: `npm run check`
-Expected: PASS with 0 errors, static artifacts checked.
+      Run: `npm run check`
+      Expected: PASS with 0 errors, static artifacts checked.
 
 - [ ] **Step 3: Commit explorer client controller**
+
 ```bash
 git add apps/web/public/explorer.js
 git commit -m "feat(web): implement client triage state, dynamic grouping, and export actions in explorer.js"
@@ -173,10 +185,12 @@ git commit -m "feat(web): implement client triage state, dynamic grouping, and e
 ### Task 5: Reading List & Editorial Polish (`apps/web/src/pages/reading-list/index.astro`, `apps/web/src/pages/papers/index.astro`)
 
 **Files:**
+
 - Modify: `apps/web/src/pages/reading-list/index.astro:1-208`
 - Modify: `apps/web/src/pages/papers/index.astro:1-16`
 
 **Interfaces:**
+
 - Consumes: `getPapers()`, `PapersExplorer`.
 - Produces:
   - Refined `/reading-list/` page featuring:
@@ -186,13 +200,14 @@ git commit -m "feat(web): implement client triage state, dynamic grouping, and e
   - Polished `/papers/` catalog page.
 
 - [ ] **Step 1: Polish `reading-list/index.astro` and `papers/index.astro`**
-Update page headers, copy, and layout to guide the user into triaging scanned paper candidates and exploring by date or category.
+      Update page headers, copy, and layout to guide the user into triaging scanned paper candidates and exploring by date or category.
 
 - [ ] **Step 2: Verify typecheck and build**
-Run: `npm run check`
-Expected: PASS with 0 errors.
+      Run: `npm run check`
+      Expected: PASS with 0 errors.
 
 - [ ] **Step 3: Commit page improvements**
+
 ```bash
 git add apps/web/src/pages/reading-list/index.astro apps/web/src/pages/papers/index.astro
 git commit -m "feat(web): polish reading list triage hub and catalog pages"
@@ -203,15 +218,17 @@ git commit -m "feat(web): polish reading list triage hub and catalog pages"
 ### Task 6: Comprehensive Verification & Quality Gates
 
 **Files:**
+
 - Test / Verify all touched files.
 
 **Interfaces:**
+
 - Consumes: Test runners, linters, and build pipelines.
 - Produces: Passing test reports, verified responsive layout, and deployment dry-run.
 
 - [ ] **Step 1: Run full check suite**
-Run: `npm run check`
-Expected: 
+      Run: `npm run check`
+      Expected:
   - `astro check`: 0 errors, 0 warnings.
   - `tsc`: 0 errors.
   - `vitest`: 219/219 tests pass.
@@ -221,6 +238,7 @@ Expected:
   - `deploy:dry-run`: Pass.
 
 - [ ] **Step 2: Commit any final test or formatting adjustments**
+
 ```bash
 git add -A
 git commit -m "chore: format and verify UI redesign and candidate triage system"
