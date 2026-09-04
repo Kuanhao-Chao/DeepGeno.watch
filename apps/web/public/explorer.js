@@ -156,7 +156,8 @@ const loadTriageState = () => {
     if (
       parsed &&
       typeof parsed.decisions === "object" &&
-      parsed.decisions !== null
+      parsed.decisions !== null &&
+      !Array.isArray(parsed.decisions)
     ) {
       return parsed;
     }
@@ -533,11 +534,12 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
         apply(false);
       }
     } else if (action === "reset") {
+      const wasTriagedOnly = filterTriagedOnly;
       delete triageState.decisions[slug];
       saveTriageState(triageState);
       updateRowTriage(row, null);
       updateDrawer();
-      if (filterTriagedOnly) {
+      if (wasTriagedOnly || filterTriagedOnly) {
         apply(false);
       }
     }
@@ -640,7 +642,7 @@ document.querySelectorAll("[data-explorer]").forEach((explorer) => {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast("Triage decisions exported as JSON");
   });
 
