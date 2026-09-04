@@ -11,3 +11,4 @@ config/models.local.yaml
 *.log
 coverage/
 data/private/**/*.tmp
+.superpowers

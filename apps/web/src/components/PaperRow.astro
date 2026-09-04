@@ -16,6 +16,7 @@ interface Props {
 
 const { paper } = Astro.props;
 const { data } = paper;
+const category = data.topics[0] || data.tags[0] || '';
 const searchText = [
   data.title,
   data.hook,
@@ -35,6 +36,9 @@ const date = paperDate(paper);
 <li
   class="paper-row"
   data-paper
+  data-slug={data.slug}
+  data-title={data.title}
+  data-category={category}
   data-date={date.toISOString()}
   data-priority={data.priority}
   data-priority-rank={priorityRank(data.priority)}
@@ -42,19 +46,21 @@ const date = paperDate(paper);
   data-tags={JSON.stringify(data.tags.map((tag) => tag.toLocaleLowerCase()))}
   data-search={searchText}
 >
-  <article>
+  <article data-slug={data.slug}>
     <div class="paper-row__date">
-      <time datetime={date.toISOString()}>{formatDate(date)}</time>
-      <span>{data.venue ?? data.source}</span>
+      <time datetime={date.toISOString()} class="date-chip">{formatDate(date)}</time>
+      <span class="venue-chip">{data.venue ?? data.source}</span>
     </div>
     <div class="paper-row__body">
       <h2><a href={paperHref(paper)}>{data.title}</a></h2>
-      <p class="paper-row__authors">{formatAuthors(data.authors, true)}</p>
+      <p class="paper-row__authors">{formatAuthors(data.authors)}</p>
       <p class="paper-row__hook">{data.hook}</p>
       {data.abstract && (
         <details class="paper-row__abstract">
-          <summary>Read full abstract</summary>
-          <p>{data.abstract}</p>
+          <summary class="abstract-toggle">Read full abstract</summary>
+          <div class="abstract-panel">
+            <p>{data.abstract}</p>
+          </div>
         </details>
       )}
       {data.tags.length > 0 && (
@@ -64,9 +70,39 @@ const date = paperDate(paper);
       )}
     </div>
     <div class="paper-row__state">
-      <StatusBadge value={data.priority} kind="priority" />
-      <StatusBadge value={data.progress} kind="progress" />
+      <div class="paper-row__badges">
+        <StatusBadge value={data.priority} kind="priority" />
+        <StatusBadge value={data.progress} kind="progress" />
+        <span class="triage-badge" data-triage-badge hidden></span>
+      </div>
       <span class="evidence-note">{evidenceLabel(data.evidence.scope)}</span>
+      <div class="triage-btn-group">
+        <button
+          type="button"
+          class="triage-btn triage-btn--deep-dive"
+          data-triage-action="deep-dive"
+          title="Mark for deep-dive summary"
+        >
+          ✨ Deep Dive
+        </button>
+        <button
+          type="button"
+          class="triage-btn triage-btn--archive"
+          data-triage-action="archived"
+          title="Archive candidate"
+        >
+          🗑️ Archive
+        </button>
+        <button
+          type="button"
+          class="triage-btn triage-btn--reset"
+          data-triage-action="reset"
+          title="Reset triage decision"
+          hidden
+        >
+          ↺ Reset
+        </button>
+      </div>
     </div>
   </article>
 </li>
@@ -74,6 +110,7 @@ const date = paperDate(paper);
 <style>
   .paper-row {
     border-top: 1px solid var(--color-rule);
+    transition: background-color 0.2s ease, border-color 0.2s ease;
   }
 
   .paper-row:last-child {
@@ -82,34 +119,51 @@ const date = paperDate(paper);
 
   article {
     display: grid;
-    grid-template-columns: minmax(7rem, 0.72fr) minmax(0, 3.7fr) minmax(8.4rem, 0.85fr);
-    gap: clamp(1rem, 3vw, 2.25rem);
-    padding: clamp(1.3rem, 3vw, 2rem) 0;
-  }
-
-  .paper-row__date,
-  .paper-row__state {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+    grid-template-columns: minmax(7.5rem, 0.75fr) minmax(0, 3.2fr) minmax(11.5rem, 1.15fr);
+    gap: clamp(1rem, 2.5vw, 2.25rem);
+    padding: clamp(1.3rem, 2.5vw, 2rem) 0;
+    align-items: start;
   }
 
   .paper-row__date {
-    color: var(--color-muted);
-    font-size: var(--fs-small);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.45rem;
   }
 
-  .paper-row__date time {
+  .date-chip {
     color: var(--color-ink);
     font-family: var(--font-display);
-    font-weight: 600;
+    font-size: 0.85rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+
+  .venue-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    background: var(--color-surface-muted);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    line-height: 1.2;
+    width: fit-content;
+  }
+
+  .paper-row__body {
+    min-width: 0;
   }
 
   h2 {
-    max-width: 40ch;
-    font-size: clamp(1.18rem, 1.9vw, 1.52rem);
-    line-height: 1.2;
+    max-width: 44ch;
+    font-size: clamp(1.2rem, 1.8vw, 1.55rem);
+    line-height: 1.22;
+    letter-spacing: -0.015em;
   }
 
   h2 a {
@@ -127,16 +181,54 @@ const date = paperDate(paper);
   }
 
   .paper-row__authors {
-    margin-top: 0.48rem;
+    margin-top: 0.45rem;
     color: var(--color-muted);
     font-size: var(--fs-small);
+    line-height: 1.45;
   }
 
   .paper-row__hook {
-    max-width: 62ch;
+    max-width: 66ch;
     margin-top: 0.75rem;
     color: var(--color-ink-soft);
-    line-height: 1.55;
+    font-size: 0.94rem;
+    line-height: 1.58;
+  }
+
+  .paper-row__abstract {
+    margin-top: 0.65rem;
+    border: none;
+    background: transparent;
+    padding: 0;
+  }
+
+  .paper-row__abstract summary {
+    list-style: none;
+  }
+
+  .paper-row__abstract summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .abstract-toggle::after {
+    content: "";
+    display: inline-block;
+    width: 0.38rem;
+    height: 0.38rem;
+    margin-left: 0.4rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg) translateY(-1px);
+    transition: transform 0.2s ease;
+  }
+
+  .paper-row__abstract[open] .abstract-toggle::after {
+    transform: rotate(-135deg) translateY(-1px);
+  }
+
+  .paper-row__abstract[open] .abstract-toggle {
+    background: var(--color-surface-hover);
+    border-color: var(--color-rule-strong);
   }
 
   .tag-list {
@@ -147,82 +239,132 @@ const date = paperDate(paper);
   }
 
   .tag-list li {
-    padding: 0.12rem 0.42rem;
+    padding: 0.12rem 0.45rem;
     background: var(--color-surface-muted);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     color: var(--color-muted);
     font-size: 0.75rem;
   }
 
   .paper-row__state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.65rem;
     justify-self: end;
   }
 
-  .paper-row__abstract {
-    margin-top: 0.75rem;
-    padding: 0.65rem 0.85rem;
-    background: var(--color-surface-soft, rgba(0, 0, 0, 0.02));
-    border: 1px solid var(--color-rule);
-    border-radius: var(--radius-sm, 4px);
-    font-size: var(--fs-small);
-  }
-
-  .paper-row__abstract summary {
-    cursor: pointer;
-    font-family: var(--font-display);
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--color-accent-strong);
-    user-select: none;
-  }
-
-  .paper-row__abstract summary:hover {
-    text-decoration: underline;
-  }
-
-  .paper-row__abstract p {
-    margin-top: 0.5rem;
-    line-height: 1.6;
-    color: var(--color-ink-muted, var(--color-ink));
+  .paper-row__badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.4rem;
   }
 
   .evidence-note {
-    max-width: 12rem;
-    margin-top: 0.18rem;
+    max-width: 14rem;
+    text-align: right;
     color: var(--color-muted);
     font-size: 0.74rem;
     line-height: 1.35;
   }
 
+  .triage-btn-group {
+    margin-top: 0.25rem;
+    justify-content: flex-end;
+  }
+
+  .triage-btn[hidden],
+  [data-triage-badge][hidden] {
+    display: none !important;
+  }
+
   @media (max-width: 50rem) {
     article {
       grid-template-columns: 1fr auto;
+      gap: 1.25rem;
     }
 
     .paper-row__date {
       grid-column: 1 / -1;
       flex-direction: row;
+      align-items: center;
       flex-wrap: wrap;
+      gap: 0.5rem 0.75rem;
+    }
+
+    .paper-row__body {
+      grid-column: 1;
     }
 
     .paper-row__state {
       grid-column: 2;
-      grid-row: 2;
+      align-items: flex-end;
     }
   }
 
   @media (max-width: 36rem) {
     article {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      padding: 1.35rem 0;
+    }
+
+    .paper-row__date {
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.75rem;
     }
 
     .paper-row__state {
-      flex-flow: row wrap;
-      margin-top: 1rem;
+      width: 100%;
+      align-items: flex-start;
+      margin-top: 0.5rem;
+      gap: 0.65rem;
+    }
+
+    .paper-row__badges {
+      justify-content: flex-start;
+      width: 100%;
     }
 
     .evidence-note {
-      flex-basis: 100%;
+      text-align: left;
+      max-width: 100%;
+    }
+
+    .triage-btn-group {
+      width: 100%;
+      justify-content: stretch;
+      gap: 0.5rem;
+    }
+
+    .triage-btn {
+      flex: 1 1 calc(50% - 0.25rem);
+      justify-content: center;
+      min-height: 2.75rem; /* >= 44px touch target (AAA) */
+      font-size: 0.82rem;
+    }
+
+    .triage-btn--reset {
+      flex: 1 1 100%;
+      min-height: 2.75rem;
+    }
+
+    .abstract-toggle {
+      min-height: 2.75rem; /* >= 44px touch target */
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 32rem) {
+    article {
+      padding: 1.15rem 0;
+      gap: 0.85rem;
     }
   }
 </style>

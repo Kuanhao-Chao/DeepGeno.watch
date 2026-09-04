@@ -13,14 +13,66 @@ const counts = {
 
 <PageLayout
   title="Reading list"
-  eyebrow="Editorial workflow"
-  lead="A public view of what is queued, skimmed, and read. It is an editorial status—not a claim about paper quality."
+  eyebrow="Editorial triage cockpit"
+  lead="The editorial triage cockpit for scanned computational genomics candidates. Expand full abstracts, select ✨ Deep Dive to prioritize papers for two-gate synthesis or 🗑️ Archive to discard, and export decision batches. Reading progress reflects editorial workflow status, not intrinsic scientific merit."
 >
   <dl class="progress-summary">
-    <div><dt>Queued</dt><dd>{counts.queued}</dd></div>
-    <div><dt>Skimmed</dt><dd>{counts.skimmed}</dd></div>
-    <div><dt>Read</dt><dd>{counts.read}</dd></div>
+    <div class="progress-summary__item">
+      <dt class="progress-summary__meta">
+        <span>Queued</span>
+        <span class="progress-summary__hint">Candidates to triage</span>
+      </dt>
+      <dd>{counts.queued}</dd>
+    </div>
+    <div class="progress-summary__item">
+      <dt class="progress-summary__meta">
+        <span>Skimmed</span>
+        <span class="progress-summary__hint">Active & triaged</span>
+      </dt>
+      <dd>{counts.skimmed}</dd>
+    </div>
+    <div class="progress-summary__item">
+      <dt class="progress-summary__meta">
+        <span>Read</span>
+        <span class="progress-summary__hint">Full synthesis published</span>
+      </dt>
+      <dd>{counts.read}</dd>
+    </div>
   </dl>
+
+  <section class="triage-guide" aria-label="Candidate triage instructions">
+    <div class="triage-guide__header">
+      <p class="triage-guide__eyebrow">Editorial Workflow</p>
+      <h2>Candidate Triage & Editorial Dispatch</h2>
+      <p class="triage-guide__intro">
+        Scanned preprints enter this queue awaiting human curation. Follow this three-step workflow to triage candidates and trigger automated deep dives:
+      </p>
+    </div>
+
+    <ol class="triage-steps">
+      <li class="triage-step">
+        <div class="triage-step__marker" aria-hidden="true">1</div>
+        <div class="triage-step__body">
+          <h3>Expand full abstracts</h3>
+          <p>Click <strong>Abstract</strong> on individual paper cards or use the top <strong>Expand All Abstracts</strong> button to review architectures, datasets, and benchmarks without leaving the list.</p>
+        </div>
+      </li>
+      <li class="triage-step">
+        <div class="triage-step__marker" aria-hidden="true">2</div>
+        <div class="triage-step__body">
+          <h3>Mark candidate decisions</h3>
+          <p>Select <strong class="triage-step__highlight--accent">✨ Deep Dive</strong> to flag papers for comprehensive technical synthesis, or <strong class="triage-step__highlight--archive">🗑️ Archive</strong> to discard non-target candidates.</p>
+        </div>
+      </li>
+      <li class="triage-step">
+        <div class="triage-step__marker" aria-hidden="true">3</div>
+        <div class="triage-step__body">
+          <h3>Export & dispatch via drawer</h3>
+          <p>Use the floating bottom action drawer to <strong>Copy CLI Commands</strong> (<code>gh workflow run summarize.yml ...</code>) for batch pipeline dispatch, or export decisions as structured JSON.</p>
+        </div>
+      </li>
+    </ol>
+  </section>
 
   <section class="survey-briefing" aria-labelledby="survey-briefing-title">
     <div class="survey-briefing__header">
@@ -84,72 +136,205 @@ const counts = {
   .progress-summary {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    border-top: 1px solid var(--color-rule);
-    border-bottom: 1px solid var(--color-rule);
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
   }
 
-  .progress-summary div {
+  .progress-summary__item {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 1rem clamp(0.8rem, 2vw, 1.5rem);
+    padding: 1.15rem clamp(1rem, 2.5vw, 1.75rem);
+    transition: background 0.15s ease;
   }
 
-  .progress-summary div + div {
+  .progress-summary__item:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .progress-summary__item + .progress-summary__item {
     border-left: 1px solid var(--color-rule);
   }
 
-  dt {
+  .progress-summary__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .progress-summary dt {
     color: var(--color-muted);
     font-family: var(--font-display);
-    font-size: 0.75rem;
-    font-weight: 620;
-    letter-spacing: 0.07em;
+    font-size: 0.76rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
-  dd {
-    color: var(--color-accent-strong);
-    font-family: var(--font-display);
-    font-size: 1.5rem;
-    font-weight: 580;
+  .progress-summary__hint {
+    display: block;
+    color: var(--color-muted);
+    font-family: var(--font-body);
+    font-size: 0.74rem;
+    font-weight: 450;
+    letter-spacing: normal;
+    text-transform: none;
   }
 
-  .survey-briefing {
-    margin-top: clamp(2rem, 4vw, 3.5rem);
-    padding: clamp(1.5rem, 3vw, 2.5rem);
-    background: var(--color-surface-soft, rgba(0, 0, 0, 0.02));
+  .progress-summary dd {
+    color: var(--color-accent-strong);
+    font-family: var(--font-display);
+    font-size: clamp(1.5rem, 2.5vw, 2rem);
+    font-weight: 650;
+    line-height: 1;
+  }
+
+  /* Triage Guide Section */
+  .triage-guide {
+    margin-top: clamp(1.75rem, 3.5vw, 2.75rem);
+    padding: clamp(1.25rem, 2.5vw, 2rem);
+    background: var(--color-surface);
     border: 1px solid var(--color-rule);
-    border-radius: var(--radius-md, 8px);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .triage-guide__eyebrow {
+    color: var(--color-accent);
+    font-family: var(--font-display);
+    font-size: 0.74rem;
+    font-weight: 650;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .triage-guide__header h2 {
+    margin-top: 0.35rem;
+    font-size: clamp(1.2rem, 2vw, 1.5rem);
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+  }
+
+  .triage-guide__intro {
+    margin-top: 0.5rem;
+    color: var(--color-ink-soft);
+    font-size: var(--fs-body);
+    line-height: 1.55;
+    max-width: 68ch;
+  }
+
+  .triage-steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+    gap: 1rem;
+    margin-top: 1.35rem;
+    list-style: none;
+    padding: 0;
+  }
+
+  .triage-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding: 1rem 1.15rem;
+    background: var(--color-surface-muted);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sm);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .triage-step:hover {
+    border-color: var(--color-rule-strong);
+    background: var(--color-surface-hover);
+  }
+
+  .triage-step__marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .triage-step__body h3 {
+    font-size: 0.95rem;
+    font-weight: 650;
+    line-height: 1.3;
+    color: var(--color-ink);
+  }
+
+  .triage-step__body p {
+    margin-top: 0.35rem;
+    font-size: var(--fs-abstract);
+    line-height: 1.5;
+    color: var(--color-ink-soft);
+  }
+
+  .triage-step__body code {
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-rule);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+
+  .triage-step__highlight--accent {
+    color: var(--color-accent-strong);
+  }
+
+  .triage-step__highlight--archive {
+    color: var(--color-muted);
+  }
+
+  /* Daily Survey Briefing */
+  .survey-briefing {
+    margin-top: clamp(2rem, 4vw, 3.25rem);
+    padding: clamp(1.4rem, 3vw, 2.25rem);
+    background: var(--color-surface-muted);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
   }
 
   .survey-briefing__eyebrow {
     color: var(--color-accent);
     font-family: var(--font-display);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 650;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   .survey-briefing__header h2 {
     margin-top: 0.35rem;
-    font-size: clamp(1.35rem, 2.4vw, 1.85rem);
+    font-size: clamp(1.3rem, 2.2vw, 1.75rem);
     line-height: 1.25;
+    letter-spacing: -0.02em;
   }
 
   .survey-briefing__lead {
     max-width: 72ch;
-    margin-top: 0.85rem;
+    margin-top: 0.75rem;
     color: var(--color-ink-soft);
-    font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+    font-size: var(--fs-body);
     line-height: 1.6;
   }
 
   .survey-themes {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
     gap: 1.25rem;
     margin-top: 1.75rem;
   }
@@ -157,51 +342,73 @@ const counts = {
   .theme-card {
     display: flex;
     flex-direction: column;
-    padding: 1.25rem;
-    background: var(--color-surface, #ffffff);
+    padding: 1.25rem 1.35rem;
+    background: var(--color-surface);
     border: 1px solid var(--color-rule);
-    border-radius: var(--radius-sm, 6px);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .theme-card:hover {
+    border-color: var(--color-rule-strong);
+    box-shadow: var(--shadow-md);
   }
 
   .theme-card__tag {
     align-self: flex-start;
-    padding: 0.2rem 0.55rem;
-    background: var(--color-surface-soft, rgba(0, 0, 0, 0.04));
-    border-radius: 4px;
+    padding: 0.22rem 0.6rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-muted);
+    border: 1px solid var(--color-rule);
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 550;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
   .theme-card h3 {
-    margin-top: 0.65rem;
+    margin-top: 0.75rem;
     font-size: 1.05rem;
-    line-height: 1.35;
+    font-weight: 600;
+    line-height: 1.32;
+    letter-spacing: -0.015em;
+    color: var(--color-ink);
   }
 
   .theme-card p {
-    margin-top: 0.6rem;
+    margin-top: 0.65rem;
     color: var(--color-ink-soft);
-    font-size: 0.88rem;
-    line-height: 1.55;
+    font-size: var(--fs-abstract);
+    line-height: 1.6;
   }
 
   .theme-card a {
     color: var(--color-accent-strong);
+    font-weight: 550;
     text-decoration: underline;
     text-underline-offset: 2px;
   }
 
-  @media (max-width: 32rem) {
+  @media (max-width: 40rem) {
     .progress-summary {
       grid-template-columns: 1fr;
     }
 
-    .progress-summary div + div {
+    .progress-summary__item + .progress-summary__item {
       border-top: 1px solid var(--color-rule);
       border-left: 0;
+    }
+
+    .triage-step {
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .theme-card {
+      padding: 1.1rem;
     }
   }
 </style>
