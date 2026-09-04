@@ -51,6 +51,12 @@ const date = paperDate(paper);
       <h2><a href={paperHref(paper)}>{data.title}</a></h2>
       <p class="paper-row__authors">{formatAuthors(data.authors, true)}</p>
       <p class="paper-row__hook">{data.hook}</p>
+      {data.abstract && (
+        <details class="paper-row__abstract">
+          <summary>Read full abstract</summary>
+          <p>{data.abstract}</p>
+        </details>
+      )}
       {data.tags.length > 0 && (
         <ul class="tag-list" aria-label="Topics">
           {data.tags.slice(0, 5).map((tag) => <li>{tag}</li>)}
@@ -150,6 +156,34 @@ const date = paperDate(paper);
 
   .paper-row__state {
     justify-self: end;
+  }
+
+  .paper-row__abstract {
+    margin-top: 0.75rem;
+    padding: 0.65rem 0.85rem;
+    background: var(--color-surface-soft, rgba(0, 0, 0, 0.02));
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--fs-small);
+  }
+
+  .paper-row__abstract summary {
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-accent-strong);
+    user-select: none;
+  }
+
+  .paper-row__abstract summary:hover {
+    text-decoration: underline;
+  }
+
+  .paper-row__abstract p {
+    margin-top: 0.5rem;
+    line-height: 1.6;
+    color: var(--color-ink-muted, var(--color-ink));
   }
 
   .evidence-note {

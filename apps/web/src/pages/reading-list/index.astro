@@ -21,6 +21,62 @@ const counts = {
     <div><dt>Skimmed</dt><dd>{counts.skimmed}</dd></div>
     <div><dt>Read</dt><dd>{counts.read}</dd></div>
   </dl>
+
+  <section class="survey-briefing" aria-labelledby="survey-briefing-title">
+    <div class="survey-briefing__header">
+      <p class="survey-briefing__eyebrow">Daily Survey Briefing · Sep 3, 2026</p>
+      <h2 id="survey-briefing-title">Today's Survey: 13 Papers on Genomic Foundation Models, Context Compression & Single-Cell Scaling</h2>
+    </div>
+
+    <div class="survey-briefing__content">
+      <p class="survey-briefing__lead">
+        Today's literature survey captures 13 newly queued papers spanning model compression, verifiable interpretability, evolutionary tokenization, and single-cell scaling. Below is the technical synthesis of today's key breakthroughs and methodologies:
+      </p>
+
+      <div class="survey-themes">
+        <article class="theme-card">
+          <div class="theme-card__tag">Inference & Serving</div>
+          <h3>Extreme Context Compression (Evo 2)</h3>
+          <p>
+            <strong>TurboQuant-Bio</strong> (<a href="/papers/calibration-free-compression-brings-evo-2-to-its-full-million-token-context-on-a-single-gpu-75592d4/">Patsakis et al.</a>) achieves near-lossless 4-bit compression of Evo 2 weights and attention cache without calibration data. It serves both through fused custom kernels, bringing Evo 2 40B onto one 80 GB GPU and Evo 2 7B to its full 1,000,000-token context within 40 GB memory—an 8× context gain. It also discovers that the released chunked-prefill path silently produces uncorrelated likelihoods and repairs it, enabling a 580 kb bacterial genome to be scored in 22 minutes rather than 13.7 hours.
+          </p>
+        </article>
+
+        <article class="theme-card">
+          <div class="theme-card__tag">Interpretability & Verification</div>
+          <h3>Verifiable Sequence-to-Function</h3>
+          <p>
+            <strong>S2F-Agent</strong> (<a href="/papers/s2f-agent-harnessing-sequence-to-function-models-for-verifiable-genome-interpretation-ad7a239/">Li et al.</a>) shifts genome interpretation from black-box neural scoring to verifiable multi-agent reasoning, orchestrating sequence-to-function foundation models with automated evidence verification. In parallel, <a href="/papers/evaluating-post-hoc-explanations-of-dnabert-2-0d229cf/">Kurth et al.</a> evaluate post-hoc feature attribution on DNABERT-2, identifying baseline selection issues in Integrated Gradients and providing guidelines for faithful biological motif attribution.
+          </p>
+        </article>
+
+        <article class="theme-card">
+          <div class="theme-card__tag">Architecture & Pretraining</div>
+          <h3>Evolution-Guided Tokenization & Multimodal DNA</h3>
+          <p>
+            <strong>EvoLen</strong> (<a href="/papers/evolen-evolution-guided-tokenization-for-dna-language-model-c8a483f/">Huang et al.</a>) demonstrates that statistical BPE tokenization fragments regulatory motifs, proposing token dictionaries derived from multi-species evolutionary conservation alignments. Complementing this, <a href="/papers/a-self-supervised-dna-foundation-model-with-collapse-resistant-multimodal-fusion-3e53471/">Chen</a> develops a collapse-resistant multimodal fusion mechanism preventing DNA sequence features from dominating chromatin accessibility in joint pretraining.
+          </p>
+        </article>
+
+        <article class="theme-card">
+          <div class="theme-card__tag">Single-Cell Genomics</div>
+          <h3>Scaling Laws & Generative Transcriptomics</h3>
+          <p>
+            <strong>Scaling recipes for scRNA-seq</strong> (<a href="/papers/scaling-recipes-for-single-cell-rna-sequencing-foundation-models-when-do-scaling-laws-hold-1f1cc71/">Borra et al.</a>) establishes empirical boundaries for when model and data scaling yield real transfer gains in single-cell foundation models. For generative synthesis, <a href="/papers/scaling-an-autoregressive-transformer-for-single-cell-generation-b07d981/">Sharipov et al.</a> scale autoregressive transformers to synthesize realistic multi-gene profiles, while <strong>COBRA</strong> (<a href="/papers/cobra-cell-type-specific-orthogonal-batch-effect-removal-algorithm-54a7f07/">Seo et al.</a>) introduces orthogonal subspace projection to eliminate batch confounders without erasing subtle biological heterogeneity.
+          </p>
+        </article>
+
+        <article class="theme-card">
+          <div class="theme-card__tag">Structural & Spatial Omics</div>
+          <h3>3D Chromatin Connectomes & RNA Therapeutics</h3>
+          <p>
+            <a href="/papers/3d-epigenome-of-glial-cell-types-in-developing-human-cortex-2307d51/">Jones et al. (Nature)</a> map high-resolution 3D chromatin loops across glial lineages in the developing human cortex, physically linking non-coding neuropsychiatric risk variants to target promoters. On the molecular side, <strong>GRASSP</strong> (<a href="/papers/grassp-rna-language-model-enhanced-graph-attention-cf1011e/">Nguyen & Le</a>) pairs RNA language models with adaptive gated graph attention to predict small-molecule binding sites on structured RNA targets, and <strong>Yanez Sarmiento et al.</strong> (<a href="/papers/interpreting-protein-language-model-embeddings-via-orthogonal-projection-5a308a6/">arXiv:2608.25548</a>) use orthogonal projection on PLM embeddings for zero-shot protein fitness prediction.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <PapersExplorer papers={papers} action="/reading-list/" defaultProgress="queued" />
 </PageLayout>
 
@@ -58,6 +114,84 @@ const counts = {
     font-family: var(--font-display);
     font-size: 1.5rem;
     font-weight: 580;
+  }
+
+  .survey-briefing {
+    margin-top: clamp(2rem, 4vw, 3.5rem);
+    padding: clamp(1.5rem, 3vw, 2.5rem);
+    background: var(--color-surface-soft, rgba(0, 0, 0, 0.02));
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-md, 8px);
+  }
+
+  .survey-briefing__eyebrow {
+    color: var(--color-accent);
+    font-family: var(--font-display);
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .survey-briefing__header h2 {
+    margin-top: 0.35rem;
+    font-size: clamp(1.35rem, 2.4vw, 1.85rem);
+    line-height: 1.25;
+  }
+
+  .survey-briefing__lead {
+    max-width: 72ch;
+    margin-top: 0.85rem;
+    color: var(--color-ink-soft);
+    font-size: clamp(0.95rem, 1.2vw, 1.05rem);
+    line-height: 1.6;
+  }
+
+  .survey-themes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: 1.25rem;
+    margin-top: 1.75rem;
+  }
+
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem;
+    background: var(--color-surface, #ffffff);
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-sm, 6px);
+  }
+
+  .theme-card__tag {
+    align-self: flex-start;
+    padding: 0.2rem 0.55rem;
+    background: var(--color-surface-soft, rgba(0, 0, 0, 0.04));
+    border-radius: 4px;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 550;
+    text-transform: uppercase;
+  }
+
+  .theme-card h3 {
+    margin-top: 0.65rem;
+    font-size: 1.05rem;
+    line-height: 1.35;
+  }
+
+  .theme-card p {
+    margin-top: 0.6rem;
+    color: var(--color-ink-soft);
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+
+  .theme-card a {
+    color: var(--color-accent-strong);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   @media (max-width: 32rem) {
