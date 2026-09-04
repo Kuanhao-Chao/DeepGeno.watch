@@ -87,6 +87,7 @@ function formatLocator(locator: (typeof data.evidence.references)[number]['locat
       <nav class="section-nav" aria-label="On this page">
         <p>In this summary</p>
         <ol>
+          {data.abstract && <li><a href="#abstract">Abstract</a></li>}
           <li><a href="#problem">Problem & novelty</a></li>
           <li><a href="#architecture">Architecture & data</a></li>
           <li><a href="#results">Results</a></li>
@@ -96,6 +97,16 @@ function formatLocator(locator: (typeof data.evidence.references)[number]['locat
       </nav>
 
       <div class="summary">
+        {data.abstract && (
+          <section id="abstract" class="summary-section">
+            <p class="section-index">00</p>
+            <h2>Abstract</h2>
+            <div class="statement statement--abstract">
+              <p>{data.abstract}</p>
+            </div>
+          </section>
+        )}
+
         <section id="problem" class="summary-section">
           <p class="section-index">01</p>
           <h2>Core problem & novelty</h2>
@@ -400,6 +411,16 @@ function formatLocator(locator: (typeof data.evidence.references)[number]['locat
     max-width: 68ch;
     margin-top: 1.4rem;
     color: var(--color-ink-soft);
+  }
+
+  .statement--abstract {
+    padding: 1.25rem 1.5rem;
+    background: var(--color-surface-soft, rgba(0, 0, 0, 0.02));
+    border-left: 3px solid var(--color-accent);
+    border-radius: 4px;
+    font-size: var(--fs-base);
+    line-height: 1.7;
+    color: var(--color-ink);
   }
 
   .statement--lead {

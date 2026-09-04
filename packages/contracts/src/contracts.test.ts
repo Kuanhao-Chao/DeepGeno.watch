@@ -488,4 +488,58 @@ describe("configuration and publication", () => {
   it("parses the rich summary independently", () => {
     expect(TechnicalSummarySchema.safeParse(summary).success).toBe(true);
   });
+
+  it("accepts an optional abstract on public paper", () => {
+    const result = PublicPaperSchema.safeParse({
+      schemaVersion: "2.0",
+      slug: "a-paper-1234567",
+      title: "A paper",
+      authors: ["A. Author"],
+      publishedAt: timestamp,
+      updatedAt: timestamp,
+      source: "biorxiv",
+      url: "https://example.org/paper-1",
+      abstract: "This is a full scientific abstract of the paper.",
+      hook: summary.hook,
+      priority: "must-read",
+      progress: "queued",
+      tags: summary.tags,
+      topics: summary.topics,
+      organisms: summary.organisms,
+      modalities: summary.modalities,
+      evidence: {
+        scope: "abstract-only",
+        fullTextAvailable: false,
+        references: [
+          {
+            id: "e1",
+            documentKind: "abstract",
+            sourceUrl: "https://example.org/paper-1",
+            locator: { section: "Abstract" },
+          },
+        ],
+      },
+      coreProblem: summary.coreProblem,
+      novelty: summary.novelty,
+      architecture: summary.architecture,
+      datasets: summary.data.datasets,
+      benchmarks: summary.data.benchmarks,
+      results: summary.quantitativeResults,
+      takeaways: summary.takeaways,
+      limitations: summary.limitations,
+      provenance: {
+        generation: {
+          provider: "openai",
+          model: "configured-model",
+          generatedAt: timestamp,
+          prompt: { id: "technical-summary", version: "1" },
+          outputSchemaVersion: "1.0",
+        },
+        review: {
+          approvedAt: timestamp,
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
 });

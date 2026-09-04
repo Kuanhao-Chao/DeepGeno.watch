@@ -134,6 +134,7 @@ export const PublicPaperSchema = z
     codeUrl: UrlSchema.optional(),
     dataUrl: UrlSchema.optional(),
     projectUrl: UrlSchema.optional(),
+    abstract: NonEmptyStringSchema.optional(),
     hook: NonEmptyStringSchema,
     priority: PrioritySchema,
     progress: ProgressSchema,
