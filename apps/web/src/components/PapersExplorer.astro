@@ -12,9 +12,51 @@ interface Props {
 
 const { papers, action = '/papers/', defaultProgress = 'all' } = Astro.props;
 const tags = uniqueValues(papers, 'tags');
+
+const tagCounts = tags.map((tag) => ({
+  tag,
+  count: papers.filter(
+    (paper) =>
+      paper.data.tags.includes(tag) ||
+      (paper.data.topics && paper.data.topics.some((t) => t.toLowerCase() === tag.toLowerCase())),
+  ).length,
+}));
 ---
 
 <section class="explorer" data-explorer data-default-progress={defaultProgress}>
+  {papers.length > 0 && (
+    <div class="explorer-controls" data-explorer-controls>
+      <div class="segmented-switcher" data-view-switcher role="group" aria-label="View Mode">
+        <button type="button" class="segmented-btn is-active" data-view="timeline" aria-pressed="true">
+          Timeline
+        </button>
+        <button type="button" class="segmented-btn" data-view="category" aria-pressed="false">
+          By Category
+        </button>
+        <button type="button" class="segmented-btn" data-view="search" aria-pressed="false">
+          Filter & Search
+        </button>
+      </div>
+
+      <div class="explorer-controls__actions">
+        <button type="button" class="abstract-toggle-all" data-toggle-all-abstracts>
+          Expand All Abstracts
+        </button>
+      </div>
+    </div>
+
+    <nav class="category-pills" data-category-bar aria-label="Topic Filter">
+      <button type="button" class="category-pill is-active" data-topic="">
+        All <span class="category-pill__count">{papers.length}</span>
+      </button>
+      {tagCounts.map(({ tag, count }) => (
+        <button type="button" class="category-pill" data-topic={tag}>
+          {tag} <span class="category-pill__count">{count}</span>
+        </button>
+      ))}
+    </nav>
+  )}
+
   <form class="filters" method="get" action={action} data-filter-form>
     <label class="filters__search">
       <span>Search the catalog</span>
@@ -82,6 +124,51 @@ const tags = uniqueValues(papers, 'tags');
           description="Try a broader search or clear one of the status filters."
         />
       </div>
+
+      <aside class="triage-drawer" data-triage-bar hidden aria-label="Candidate triage actions">
+        <div class="triage-drawer__info">
+          <span class="triage-drawer__count triage-drawer__count--deep-dive" data-triage-deep-dive-count>
+            0 Deep Dive
+          </span>
+          <span class="triage-drawer__count triage-drawer__count--archived" data-triage-archived-count>
+            0 Archived
+          </span>
+        </div>
+        <div class="triage-drawer__actions">
+          <button
+            type="button"
+            class="triage-btn triage-btn--deep-dive"
+            data-triage-copy-cli
+            title="Copy gh workflow CLI commands for selected papers"
+          >
+            Copy CLI Commands
+          </button>
+          <button
+            type="button"
+            class="triage-btn triage-btn--secondary"
+            data-triage-export-json
+            title="Download triage decisions as JSON"
+          >
+            Export JSON
+          </button>
+          <button
+            type="button"
+            class="triage-btn triage-btn--secondary"
+            data-triage-filter-only
+            title="Show only triaged papers"
+          >
+            Triaged Only
+          </button>
+          <button
+            type="button"
+            class="triage-btn triage-btn--reset"
+            data-triage-clear
+            title="Clear all local triage decisions"
+          >
+            Clear
+          </button>
+        </div>
+      </aside>
     </>
   ) : (
     <EmptyState />
@@ -93,6 +180,40 @@ const tags = uniqueValues(papers, 'tags');
 <style>
   .explorer {
     margin-top: var(--space-8);
+    padding-bottom: 5rem;
+  }
+
+  .explorer-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
+
+  .abstract-toggle-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2.1rem;
+    padding: 0.35rem 0.85rem;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-pill);
+    background: var(--color-surface);
+    color: var(--color-accent-strong);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+
+  .abstract-toggle-all:hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
   }
 
   .filters {
@@ -147,7 +268,7 @@ const tags = uniqueValues(papers, 'tags');
     min-height: 2.5rem;
   }
 
-  button {
+  .filters__actions button {
     min-height: 2.5rem;
     padding: 0.45rem 0.88rem;
     border: 1px solid var(--color-accent);
@@ -160,7 +281,7 @@ const tags = uniqueValues(papers, 'tags');
     font-weight: 600;
   }
 
-  button:hover {
+  .filters__actions button:hover {
     background: var(--color-accent-strong);
   }
 
@@ -182,7 +303,7 @@ const tags = uniqueValues(papers, 'tags');
   .results-head [data-result-count] {
     color: var(--color-ink);
     font-family: var(--font-display);
-    font-weight: 600;
+    font-weight: 650;
   }
 
   .paper-list {
@@ -191,6 +312,54 @@ const tags = uniqueValues(papers, 'tags');
 
   .filtered-empty {
     margin-top: 1rem;
+  }
+
+  .triage-drawer .triage-btn {
+    min-height: 2.1rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .triage-drawer .triage-btn--deep-dive {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  .triage-drawer .triage-btn--deep-dive:hover {
+    background: var(--color-accent-strong);
+    border-color: var(--color-accent-strong);
+  }
+
+  .triage-drawer .triage-btn--secondary {
+    border: 1px solid var(--color-rule);
+    background: var(--color-surface);
+    color: var(--color-ink);
+  }
+
+  .triage-drawer .triage-btn--secondary:hover {
+    border-color: var(--color-rule-strong);
+    background: var(--color-surface-hover);
+  }
+
+  .triage-drawer .triage-btn--secondary.is-active,
+  .triage-drawer .triage-btn--secondary[data-active="true"] {
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
+    color: var(--color-accent-strong);
+  }
+
+  .triage-drawer .triage-btn--reset {
+    border-color: transparent;
+    background: transparent;
+    color: var(--color-muted);
+    padding: 0.35rem 0.5rem;
+  }
+
+  .triage-drawer .triage-btn--reset:hover {
+    background: transparent;
+    color: var(--color-ink);
+    text-decoration: underline;
   }
 
   [hidden] {
@@ -204,6 +373,23 @@ const tags = uniqueValues(papers, 'tags');
 
     .filters__search {
       grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 48rem) {
+    .explorer {
+      padding-bottom: 7.5rem;
+    }
+
+    .explorer-controls {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.65rem;
+    }
+
+    .abstract-toggle-all {
+      width: 100%;
+      justify-content: center;
     }
   }
 
