@@ -10,11 +10,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122.0",
+    "@anthropic-ai/sdk": "^0.123.0",
     "@deepgeno/contracts": "*",
     "fast-xml-parser": "^5.2.5",
-    "openai": "^7.8.0",
+    "openai": "^7.10.0",
     "yaml": "^2.8.1",
-    "zod": "^4.1.5"
+    "zod": "^4.5.4"
   }
 }
