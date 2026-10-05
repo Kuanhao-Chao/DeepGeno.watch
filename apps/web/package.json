@@ -12,11 +12,11 @@
   "dependencies": {
     "@deepgeno/contracts": "*",
     "@astrojs/rss": "^4.0.12",
-    "@astrojs/sitemap": "^3.6.0",
+    "@astrojs/sitemap": "^3.7.4",
     "@fontsource-variable/hanken-grotesk": "^5.2.8",
     "@fontsource-variable/inter": "^5.2.8",
-    "astro": "^7.2.9",
-    "zod": "^4.1.5"
+    "astro": "^7.3.5",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.4"
